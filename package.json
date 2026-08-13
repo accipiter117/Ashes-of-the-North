@@ -1,0 +1,14 @@
+{
+  "name": "ashes-of-the-north",
+  "version": "1.0.0",
+  "description": "A mobile-first settlement strategy game inspired by the Northern Kingdoms. No build step needed to play — this package.json only supports the optional dev tests.",
+  "private": true,
+  "scripts": {
+    "test:sim": "node test/sim.js",
+    "test:smoke": "node test/dom-smoke.js",
+    "test": "npm run test:sim && npm run test:smoke"
+  },
+  "devDependencies": {
+    "jsdom": "^24.0.0"
+  }
+}
