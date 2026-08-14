@@ -42,16 +42,30 @@ const GameEngine = (function () {
   // CITIZEN GENERATION
   // ---------------------------------------------------------------
   let citizenCounter = 0;
-  function makeCitizen(age, important) {
+  function makeCitizen(age, important, lineage) {
     citizenCounter++;
     const sex = chance(0.5) ? "m" : "f";
     const first = sex === "m" ? pick(FIRST_NAMES_M) : pick(FIRST_NAMES_F);
     const last = pick(SURNAMES);
-    const traitCount = important ? 2 : (chance(0.4) ? 1 : 0);
+    lineage = lineage || {};
+    const parentIds = lineage.parentIds || [];
+    const inheritFrom = lineage.inheritTraitsFrom || []; // array of parent citizen objects
     const traits = [];
-    for (let i = 0; i < traitCount; i++) {
-      const t = pick(TRAITS).id;
-      if (!traits.includes(t)) traits.push(t);
+    if (inheritFrom.length > 0) {
+      // A child of notable parents inherits up to one trait from each parent's pool
+      // (weighted, not guaranteed — nature doesn't promise the best of both).
+      for (const parent of inheritFrom) {
+        if (parent.traits && parent.traits.length && chance(0.6)) {
+          const t = pick(parent.traits);
+          if (!traits.includes(t)) traits.push(t);
+        }
+      }
+    } else {
+      const traitCount = important ? 2 : (chance(0.4) ? 1 : 0);
+      for (let i = 0; i < traitCount; i++) {
+        const t = pick(TRAITS).id;
+        if (!traits.includes(t)) traits.push(t);
+      }
     }
     return {
       id: "c" + citizenCounter,
@@ -63,8 +77,12 @@ const GameEngine = (function () {
       loyalty: important ? 50 + Math.floor(rand() * 30) : null,
       happiness: 60,
       alive: true,
-      history: important ? ["Joined the settlement."] : [],
-      arrivedTurn: 0
+      history: important ? (parentIds.length ? [] : ["Joined the settlement."]) : [],
+      arrivedTurn: 0,
+      // Lineage (Phase 2)
+      partnerId: null,
+      childrenIds: [],
+      parentIds: parentIds
     };
   }
 
@@ -111,6 +129,7 @@ const GameEngine = (function () {
     for (let i = 0; i < 12; i++) citizens.push(makeCitizen(10 + Math.floor(rand() * 45), false));
 
     const factions = D.FACTIONS.map(f => Object.assign({}, f, { actionsThisTurn: 0, memory: [] }));
+    initFactionRelations(factions);
 
     const state = {
       version: 1,
@@ -129,6 +148,8 @@ const GameEngine = (function () {
       explorationQueue: shuffledSiteIds(),
       discoveredSites: [],
       kingdomEffects: [],
+      edicts: {},
+      scheduledEvents: [], // Phase 2: chained/delayed events queue
       flags: { tutorialSeen: false },
       stats: { deaths: 0, births: 0, battlesWon: 0, battlesLost: 0, eventsResolved: 0 }
     };
@@ -167,8 +188,49 @@ const GameEngine = (function () {
     return b && b.ruin;
   }
 
+  // Core neighbour scan, shared by the post-build lookup and the pre-build preview.
+  function computeAdjacencyForRoot(state, x, y, rootId) {
+    const neighbours = [
+      tileAt(state.grid, x - 1, y), tileAt(state.grid, x + 1, y),
+      tileAt(state.grid, x, y - 1), tileAt(state.grid, x, y + 1)
+    ].filter(Boolean);
+    const totals = {};
+    const matched = [];
+    for (const n of neighbours) {
+      for (const rule of D.ADJACENCY_RULES) {
+        if (rule.building !== rootId) continue;
+        const terrainMatch = n.terrain === rule.near;
+        const nBuilding = n.building && D.BUILDINGS[n.building];
+        const buildingMatch = nBuilding && nBuilding.chain && nBuilding.chain[0] === rule.near;
+        if (terrainMatch || buildingMatch) {
+          for (const k in rule.bonus) totals[k] = round2((totals[k] || 0) + rule.bonus[k]);
+          matched.push(rule.desc);
+        }
+      }
+    }
+    return Object.keys(totals).length ? { totals, matched } : null;
+  }
+
+  // Sums every ADJACENCY_RULES match against this tile's four orthogonal neighbours.
+  // Multiple qualifying neighbours stack (a farm bordered by river on two sides gets
+  // the irrigation bonus twice) — this is what makes tile placement a real decision.
+  function adjacencyBonusForTile(state, t) {
+    if (!t || !t.building) return null;
+    const b = D.BUILDINGS[t.building];
+    if (!b || !b.chain) return null;
+    return computeAdjacencyForRoot(state, t.x, t.y, b.chain[0]);
+  }
+
+  // Preview what adjacency bonus a NOT-YET-PLACED building would get on this tile,
+  // so the UI can help the player plan before they commit resources.
+  function previewAdjacency(state, x, y, buildingId) {
+    const b = D.BUILDINGS[buildingId];
+    if (!b || !b.chain) return null;
+    return computeAdjacencyForRoot(state, x, y, b.chain[0]);
+  }
+
   function capacities(state) {
-    const cap = { housing: BASE_CAMP_HOUSING, defense: 0, jobSlots: {}, tradeBonus: 0, knowledgeMult: 1, trainingBonus: 0, foodStorage: state.resourceCap.food };
+    const cap = { housing: BASE_CAMP_HOUSING, defense: 0, jobSlots: {}, tradeBonus: 0, knowledgeMult: 1, trainingBonus: 0, foodStorage: state.resourceCap.food, adjacencyStabilityFlat: 0 };
     for (const t of state.grid) {
       if (!t.building) continue;
       const b = D.BUILDINGS[t.building];
@@ -183,6 +245,12 @@ const GameEngine = (function () {
       if (e.jobSlots) {
         for (const j in e.jobSlots) cap.jobSlots[j] = (cap.jobSlots[j] || 0) + e.jobSlots[j];
       }
+      const adj = adjacencyBonusForTile(state, t);
+      if (adj) {
+        if (adj.totals.defense) cap.defense += adj.totals.defense;
+        if (adj.totals.tradeBonus) cap.tradeBonus += adj.totals.tradeBonus;
+        if (adj.totals.stability) cap.adjacencyStabilityFlat = round2(cap.adjacencyStabilityFlat + adj.totals.stability);
+      }
     }
     return cap;
   }
@@ -195,8 +263,11 @@ const GameEngine = (function () {
     for (const t of state.grid) {
       if (!t.building) continue;
       const b = D.BUILDINGS[t.building];
-      if (!b || !b.effect || !b.effect.yieldMult || !b.chain) continue;
-      if (b.chain[0] === rootId) mult = Math.max(mult, b.effect.yieldMult);
+      if (!b || !b.chain || b.chain[0] !== rootId) continue;
+      let tileMult = (b.effect && b.effect.yieldMult) || 1;
+      const adj = adjacencyBonusForTile(state, t);
+      if (adj && adj.totals.yieldMult) tileMult += adj.totals.yieldMult;
+      mult = Math.max(mult, tileMult);
     }
     return mult;
   }
@@ -224,6 +295,35 @@ const GameEngine = (function () {
     return { mult, flat };
   }
 
+  // Same shape as techMult/kingdomMult: scans every currently-active edict for a
+  // matching effect key. "Flat" keys (ending in Flat) sum; everything else multiplies.
+  function edictMult(state, key) {
+    let mult = 1, flat = 0;
+    if (!state.edicts) return { mult, flat };
+    for (const id in state.edicts) {
+      if (!state.edicts[id] || !state.edicts[id].active) continue;
+      const def = D.EDICTS[id];
+      if (!def || !def.effect || def.effect[key] === undefined) continue;
+      if (key.endsWith("Flat")) flat += def.effect[key];
+      else mult *= def.effect[key];
+    }
+    return { mult, flat };
+  }
+
+  function toggleEdict(state, edictId) {
+    const def = D.EDICTS[edictId];
+    if (!def) return { ok: false, reason: "Unknown edict." };
+    if (!state.edicts) state.edicts = {};
+    const current = state.edicts[edictId] || { active: false, sinceTurn: -999 };
+    const turnsSince = state.meta.turn - current.sinceTurn;
+    if (turnsSince < def.cooldown) {
+      return { ok: false, reason: "This edict was changed too recently — wait " + (def.cooldown - turnsSince) + " more month(s)." };
+    }
+    state.edicts[edictId] = { active: !current.active, sinceTurn: state.meta.turn };
+    chronicle(state, (state.edicts[edictId].active ? "The edict of " + def.name + " was declared." : def.name + " was repealed."));
+    return { ok: true, active: state.edicts[edictId].active };
+  }
+
   function livingCitizens(state) { return state.citizens.filter(c => c.alive); }
   function population(state) { return livingCitizens(state).length; }
   function idleCitizens(state) { return livingCitizens(state).filter(c => !c.job && c.age >= 12); }
@@ -236,7 +336,8 @@ const GameEngine = (function () {
       str += citizensInJob(state, j).length * D.JOBS[j].military;
     }
     const { mult } = techMult(state, "militaryMult");
-    return str * mult;
+    const { mult: emult } = edictMult(state, "militaryMult");
+    return str * mult * emult;
   }
 
   // ---------------------------------------------------------------
@@ -400,16 +501,19 @@ const GameEngine = (function () {
         if (res === "food") {
           const { mult: fmult } = techMult(state, "farmYieldMult");
           const { mult: kfmult } = kingdomMult(state, "farmYieldMult");
-          amount *= fmult * kfmult;
+          const { mult: efmult } = edictMult(state, "farmYieldMult");
+          amount *= fmult * kfmult * efmult;
         }
         if (res === "coin") {
           const { mult: cmult } = techMult(state, "coinMult");
           const { mult: kcmult } = kingdomMult(state, "coinMult");
-          amount *= cmult * kcmult * (1 + cap.tradeBonus);
+          const { mult: ecmult } = edictMult(state, "coinMult");
+          amount *= cmult * kcmult * ecmult * (1 + cap.tradeBonus);
         }
         if (res === "knowledge") {
           const { mult: kmult } = techMult(state, "knowledgeMult");
-          amount *= kmult * cap.knowledgeMult;
+          const { mult: ekmult } = edictMult(state, "knowledgeMult");
+          amount *= kmult * ekmult * cap.knowledgeMult;
         }
         // trait bonuses (approximate: apply average bonus across assigned workers)
         let traitTotal = 0;
@@ -428,10 +532,12 @@ const GameEngine = (function () {
     for (const res in totals) {
       state.resources[res] = round2((state.resources[res] || 0) + totals[res]);
     }
-    // stability abstract drift from tech + kingdom
+    // stability abstract drift from tech + kingdom + edicts
     const { flat: stabFlat } = techMult(state, "stabilityFlat");
     const { flat: stabDrift } = kingdomMult(state, "stabilityDrift");
-    state.resources.stability = clamp(round2(state.resources.stability + stabFlat + stabDrift), 0, 100);
+    const { flat: stabEdict } = edictMult(state, "stabilityFlat");
+    const adjStab = cap.adjacencyStabilityFlat || 0;
+    state.resources.stability = clamp(round2(state.resources.stability + stabFlat + stabDrift + stabEdict + adjStab), 0, 100);
     return totals;
   }
 
@@ -463,9 +569,92 @@ const GameEngine = (function () {
     state.stats.deaths++;
     if (victim.important) {
       chronicle(state, victim.name + " has died" + (cause === "starvation" ? " of hunger." : cause === "battle" ? " in battle." : ".") + " Their memory will be recorded.");
+      handleSuccession(state, victim);
     } else {
       logMsg(state, "A resident named " + victim.name + " has died" + (cause ? " (" + cause + ")" : "") + ".");
     }
+  }
+
+  // When a notable citizen dies: free their partner to remarry (with a note in their
+  // own history), and — if they left living children — name the eldest as successor.
+  // This is what makes a death land as something instead of a stat decrement.
+  function handleSuccession(state, victim) {
+    if (victim.partnerId) {
+      const partner = state.citizens.find(c => c.id === victim.partnerId);
+      if (partner && partner.alive) {
+        partner.partnerId = null;
+        partner.history.push("Widowed by the death of " + victim.name + ".");
+      }
+    }
+    if (victim.childrenIds && victim.childrenIds.length) {
+      const livingChildren = victim.childrenIds
+        .map(id => state.citizens.find(c => c.id === id))
+        .filter(c => c && c.alive)
+        .sort((a, b) => b.age - a.age);
+      if (livingChildren.length) {
+        const successor = livingChildren[0];
+        successor.loyalty = clamp((successor.loyalty || 50) + 10, 0, 100);
+        successor.history.push("Took up " + victim.name + "'s place after their death.");
+        chronicle(state, successor.name + " succeeds " + victim.name + " as head of their line.");
+      }
+    }
+  }
+
+  // Marriage and birth attempts for the notable-citizen pool (see makeCitizen's
+  // `lineage` param). Deliberately scoped to important citizens rather than the full
+  // population — simulating marriage/inheritance for all ~220 possible residents would
+  // be both a performance and a UI-clutter problem for no real gameplay benefit.
+  function isCloseRelative(a, b) {
+    if (a.parentIds.includes(b.id) || b.parentIds.includes(a.id)) return true;
+    if (a.parentIds.length && b.parentIds.length && a.parentIds.some(p => b.parentIds.includes(p))) return true;
+    return false;
+  }
+
+  function attemptMarriages(state) {
+    const notables = livingCitizens(state).filter(c => c.important && !c.partnerId && c.age >= 18);
+    const commoners = livingCitizens(state).filter(c => !c.important && !c.partnerId && c.age >= 18);
+    for (const c of notables) {
+      if (c.partnerId) continue; // may have just been paired earlier in this same pass
+      if (!chance(0.03)) continue;
+      let pool = (chance(0.6) ? notables : commoners).filter(o => o.id !== c.id && !o.partnerId && !isCloseRelative(c, o));
+      if (pool.length === 0) pool = commoners.filter(o => o.id !== c.id && !o.partnerId && !isCloseRelative(c, o));
+      if (pool.length === 0) continue;
+      const partner = pick(pool);
+      c.partnerId = partner.id;
+      partner.partnerId = c.id;
+      if (!partner.important) {
+        partner.important = true;
+        partner.loyalty = 50 + Math.floor(rand() * 20);
+        partner.history.push("Married into the founding lines.");
+      }
+      c.history.push("Married " + partner.name + ".");
+      partner.history.push("Married " + c.name + ".");
+      chronicle(state, c.name + " and " + partner.name + " were married.");
+    }
+  }
+
+  function attemptBirths(state) {
+    for (const c of livingCitizens(state)) {
+      if (!c.important || !c.partnerId || c.age < 18 || c.age > 45) continue;
+      const partner = state.citizens.find(x => x.id === c.partnerId);
+      if (!partner || !partner.alive) continue;
+      if (c.id > partner.id) continue; // process each couple once, not twice
+      if (state.citizens.length >= MAX_NAMED_CITIZENS) continue;
+      if (!chance(0.025)) continue;
+      const child = makeCitizen(0, true, { parentIds: [c.id, partner.id], inheritTraitsFrom: [c, partner] });
+      child.arrivedTurn = state.meta.turn;
+      child.history.push("Born to " + c.name + " and " + partner.name + ".");
+      state.citizens.push(child);
+      c.childrenIds.push(child.id);
+      partner.childrenIds.push(child.id);
+      state.stats.births++;
+      chronicle(state, child.name + " was born to " + c.name + " and " + partner.name + ".");
+    }
+  }
+
+  function runLineage(state) {
+    attemptMarriages(state);
+    attemptBirths(state);
   }
 
   function runPopulation(state) {
@@ -474,6 +663,7 @@ const GameEngine = (function () {
     const cap = capacities(state);
     const slack = cap.housing > pop ? 1 : 0.25;
     const { mult: growthMult } = kingdomMult(state, "growthMult");
+    const { mult: edictGrowthMult } = edictMult(state, "growthMult");
     const stabFactor = state.resources.stability / 100;
     const foodFactor = state.resources.food > pop * 0.5 ? 1 : 0.4;
     const growthRate = 0.018 * stabFactor * slack * foodFactor * (growthMult || 1);
@@ -596,6 +786,81 @@ const GameEngine = (function () {
     }
   }
 
+  // ---------------------------------------------------------------
+  // INTER-FACTION POLITICS (Phase 2)
+  // ---------------------------------------------------------------
+  function initFactionRelations(factions) {
+    for (const f of factions) {
+      if (!f.relations) f.relations = {};
+      for (const g of factions) {
+        if (f.id === g.id) continue;
+        if (f.relations[g.id] === undefined) f.relations[g.id] = 0;
+      }
+    }
+    for (const seed of D.FACTION_RELATIONS_SEED) {
+      const fa = factions.find(f => f.id === seed.a);
+      const fb = factions.find(f => f.id === seed.b);
+      if (fa && fb) { fa.relations[seed.b] = seed.value; fb.relations[seed.a] = seed.value; }
+    }
+  }
+
+  function getFactionRelation(state, aId, bId) {
+    const fa = faction(state, aId);
+    if (!fa || !fa.relations) return 0;
+    return fa.relations[bId] !== undefined ? fa.relations[bId] : 0;
+  }
+
+  // Low, deliberately conservative frequency (see Phase 2 plan) — this is the most
+  // systemic of the five Phase 2 additions, so it starts cautious rather than chatty.
+  function runInterFactionPolitics(state) {
+    if (state.factions.length < 2) return;
+    if (!chance(0.06)) return;
+    const a = pick(state.factions);
+    let b = pick(state.factions);
+    let guard = 0;
+    while (b.id === a.id && guard++ < 5) b = pick(state.factions);
+    if (a.id === b.id) return;
+
+    const currentRel = getFactionRelation(state, a.id, b.id);
+    const eligible = D.FACTION_INCIDENTS.filter(inc => inc.requiresBelow === undefined || currentRel <= inc.requiresBelow);
+    if (eligible.length === 0) return;
+    const incident = pick(eligible);
+    const newVal = clamp(currentRel + incident.relationDelta, -100, 100);
+    a.relations[b.id] = newVal;
+    b.relations[a.id] = newVal;
+
+    const msg = a.name + " " + incident.label + " " + b.name + ".";
+    if (incident.kind === "war" || incident.kind === "positive") chronicle(state, msg);
+    else logMsg(state, msg);
+
+    applyInterFactionSpillover(state, a, b, incident);
+  }
+
+  // Spillover onto the player, scaled by how friendly the player already is with each
+  // side — being caught between two allies who go to war stings; benefiting from two
+  // trading partners making peace is a small, honest windfall.
+  function applyInterFactionSpillover(state, a, b, incident) {
+    const relA = a.relationship, relB = b.relationship;
+    if (incident.kind === "war") {
+      if (relA > 20 && relB > 20) {
+        state.resources.stability = clamp(round2(state.resources.stability - 4), 0, 100);
+        logMsg(state, "Caught between allies now at war, the settlement's mood grows uneasy.");
+      }
+      const strongerIsA = (a.military || 10) >= (b.military || 10);
+      const strongerRel = strongerIsA ? relA : relB;
+      if (strongerRel > 30) state.resources.reputation = clamp(round2(state.resources.reputation + 2), 0, 100);
+    } else if (incident.kind === "positive") {
+      if (relA > 20 || relB > 20) {
+        state.resources.coin = round2(state.resources.coin + 6);
+        logMsg(state, "The settlement benefits modestly from renewed ties between " + a.name + " and " + b.name + ".");
+      }
+    } else if (incident.kind === "negative") {
+      if (relA > 20 && relB > 20) {
+        state.resources.stability = clamp(round2(state.resources.stability - 2), 0, 100);
+      }
+    }
+  }
+
   function triggerRaid(state, f) {
     const attackStrength = (f.military || 20) * (0.6 + rand() * 0.6);
     const cap = capacities(state);
@@ -623,10 +888,27 @@ const GameEngine = (function () {
   // ---------------------------------------------------------------
   // EVENTS
   // ---------------------------------------------------------------
+  // Scheduled follow-up events (from a prior event's `followUp`) always take priority
+  // over a fresh random roll, and only one triggers per turn so a backlog can't pile
+  // up and ambush the player with several at once.
+  function maybeTriggerScheduledEvent(state) {
+    if (state.activeEvent) return false;
+    if (!state.scheduledEvents || state.scheduledEvents.length === 0) return false;
+    const dueIdx = state.scheduledEvents.findIndex(s => s.dueTurn <= state.meta.turn);
+    if (dueIdx === -1) return false;
+    const due = state.scheduledEvents.splice(dueIdx, 1)[0];
+    const ev = D.LOCAL_EVENTS.find(e => e.id === due.eventId);
+    if (!ev) return false; // defensive: unknown id, just drop it rather than crash
+    state.activeEvent = { id: ev.id, title: ev.title, text: ev.text, options: ev.options };
+    return true;
+  }
+
   function maybeTriggerLocalEvent(state) {
     if (state.activeEvent) return;
+    if (maybeTriggerScheduledEvent(state)) return;
     if (!chance(0.35)) return;
-    const ev = pick(D.LOCAL_EVENTS);
+    const pool = D.LOCAL_EVENTS.filter(e => !e.chainOnly);
+    const ev = pick(pool);
     state.activeEvent = { id: ev.id, title: ev.title, text: ev.text, options: ev.options };
   }
 
@@ -637,6 +919,10 @@ const GameEngine = (function () {
     if (!opt) return { ok: false, reason: "Invalid option." };
     applyEffectBundle(state, opt.effect);
     if (opt.chronicle) chronicle(state, opt.chronicle);
+    if (opt.followUp) {
+      if (!state.scheduledEvents) state.scheduledEvents = [];
+      state.scheduledEvents.push({ eventId: opt.followUp.eventId, dueTurn: state.meta.turn + opt.followUp.delayTurns });
+    }
     state.activeEvent = null;
     state.stats.eventsResolved++;
     return { ok: true };
@@ -795,7 +1081,9 @@ const GameEngine = (function () {
     runProduction(state);
     runConsumption(state);
     runPopulation(state);
+    runLineage(state);
     runFactionDrift(state);
+    runInterFactionPolitics(state);
     recomputeStage(state);
     maybeTriggerKingdomEvent(state);
     maybeTriggerLocalEvent(state);
@@ -831,6 +1119,9 @@ const GameEngine = (function () {
       if (!state.discoveredSites) state.discoveredSites = [];
       if (!state.stats) state.stats = { deaths: 0, births: 0, battlesWon: 0, battlesLost: 0, eventsResolved: 0 };
       if (!state.resourceCap) state.resourceCap = { food: 120 };
+      if (!state.edicts) state.edicts = {};
+      if (!state.scheduledEvents) state.scheduledEvents = [];
+      if (state.factions && state.factions.some(f => !f.relations)) initFactionRelations(state.factions);
       return { ok: true, state };
     } catch (e) {
       return { ok: false, reason: "Save data is corrupted and could not be read." };
@@ -856,7 +1147,8 @@ const GameEngine = (function () {
     resolveEvent, exploreNext, researchTech,
     militaryStrength, legacyScore,
     saveGame, loadGame, hasSave, deleteSave,
-    tileAt, isRuinTile, builtTiles
+    tileAt, isRuinTile, builtTiles, adjacencyBonusForTile, previewAdjacency,
+    toggleEdict, getFactionRelation
   };
 })();
 
