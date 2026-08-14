@@ -126,6 +126,13 @@ try {
   click(techBtn);
   assert(window.UI.getState().techs.unlocked.length > 0, "a technology was unlocked via UI");
 
+  // Edicts (Governance tab, same view as research/development)
+  const edictBtn = doc.querySelector("[data-edict]");
+  assert(!!edictBtn, "edict declare/repeal button present on the Governance tab");
+  click(edictBtn);
+  const anyEdictActive = Object.values(window.UI.getState().edicts).some(e => e && e.active);
+  assert(anyEdictActive, "declaring an edict via the UI actually activates it in state");
+
   // Save, then simulate reload via localStorage
   const saveResult = window.GameEngine.saveGame(window.UI.getState());
   const loaded = window.GameEngine.loadGame();
