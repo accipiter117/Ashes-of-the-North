@@ -162,6 +162,34 @@ const GameData = (function () {
     { id: "bandits",    name: "The Grey Company",    type: "Bandit Group",             leader: "unknown",           personality: "opportunist",   relationship: -30,trust: 5,  military: 35, desc: "Deserters and outlaws preying on the roads nearby." }
   ];
 
+  // ---------------------------------------------------------------
+  // INTER-FACTION POLITICS (Phase 2) — factions have opinions of each other,
+  // not just of the player. Unlisted pairs default to neutral (0) and can still
+  // shift over time via FACTION_INCIDENTS; only notable starting pairs are seeded here.
+  // ---------------------------------------------------------------
+  const FACTION_RELATIONS_SEED = [
+    { a: "garrison", b: "bandits",  value: -60 },
+    { a: "noble",    b: "bandits",  value: -20 },
+    { a: "caravan",  b: "brennas",  value: 40 },
+    { a: "caravan",  b: "bandits",  value: -50 },
+    { a: "heddon",   b: "brennas",  value: 20 },
+    { a: "chapel",   b: "witch",    value: -15 },
+    { a: "dwarves",  b: "brennas",  value: 25 },
+    { a: "noble",    b: "garrison", value: 15 },
+    { a: "witcher",  b: "bandits",  value: -30 },
+    { a: "witch",    b: "bandits",  value: -10 }
+  ];
+
+  // `requiresBelow` gates an incident to pairs whose current relationship is already
+  // at or below that value (e.g. open war only breaks out between parties already
+  // hostile; a peace treaty only makes sense between parties already at war).
+  const FACTION_INCIDENTS = [
+    { id: "trade_pact",     label: "forms a trade pact with",      relationDelta: 25,  kind: "positive" },
+    { id: "border_dispute", label: "falls into a border dispute with", relationDelta: -25, kind: "negative" },
+    { id: "open_war",       label: "declares open war on",         relationDelta: -50, kind: "war",      requiresBelow: -20 },
+    { id: "peace_treaty",   label: "signs a peace treaty with",    relationDelta: 40,  kind: "positive", requiresBelow: -20 }
+  ];
+
   const FACTION_ACTIONS = [
     { id: "trade_agreement",   name: "Propose Trade Agreement", cost: { coin: 10 },  effect: { relationship: 5, trust: 3 },  result: "recurringTrade" },
     { id: "food_trade",        name: "Trade Food for Coin",     cost: { food: 15 },  effect: { relationship: 2 },             result: "coin", amount: 12 },
@@ -237,8 +265,10 @@ const GameData = (function () {
       title: "Refugees at the Gate",
       text: "A ragged band of elven refugees has arrived, fleeing violence further south. They ask for shelter.",
       options: [
-        { text: "Admit them fully", effect: { population: 6, stability: -4, reputation: 6 }, chronicle: "Elven refugees were admitted and given a place among us." },
-        { text: "Turn them away", effect: { stability: 2, reputation: -8 }, chronicle: "Elven refugees were turned away from the gate." },
+        { text: "Admit them fully", effect: { population: 6, stability: -4, reputation: 6 }, chronicle: "Elven refugees were admitted and given a place among us.",
+          followUp: { eventId: "refugees_settled_in", delayTurns: 6 } },
+        { text: "Turn them away", effect: { stability: 2, reputation: -8 }, chronicle: "Elven refugees were turned away from the gate.",
+          followUp: { eventId: "refugees_return_bitter", delayTurns: 8 } },
         { text: "Allow temporary settlement", effect: { population: 3, stability: -1, food: -10 }, chronicle: "Elven refugees were given temporary shelter outside the walls." },
         { text: "Ask Heddon to take them", effect: { faction: "heddon", relationship: -5 }, chronicle: "The elven refugees were sent on to Heddon." },
         { text: "Exploit their labour illegally", effect: { coin: 30, stability: -8, reputation: -12 }, chronicle: "The refugees' labour was taken by force. It will not be forgotten." },
@@ -270,8 +300,10 @@ const GameData = (function () {
       title: "House Rovern Presses a Claim",
       text: "Lord Rovern's steward arrives, asserting an old claim to a strip of the settlement's fields.",
       options: [
-        { text: "Contest the claim", effect: { faction: "noble", relationship: -8, reputation: 4 }, chronicle: "The settlement contested House Rovern's claim to its fields." },
-        { text: "Pay a token tribute", effect: { coin: -20, faction: "noble", relationship: 5 }, chronicle: "A tribute was paid to House Rovern to settle the matter." },
+        { text: "Contest the claim", effect: { faction: "noble", relationship: -8, reputation: 4 }, chronicle: "The settlement contested House Rovern's claim to its fields.",
+          followUp: { eventId: "noble_retaliates", delayTurns: 7 } },
+        { text: "Pay a token tribute", effect: { coin: -20, faction: "noble", relationship: 5 }, chronicle: "A tribute was paid to House Rovern to settle the matter.",
+          followUp: { eventId: "noble_asks_more", delayTurns: 9 } },
         { text: "Concede the fields", effect: { food: -6, faction: "noble", relationship: 10 }, chronicle: "A strip of fields was conceded to House Rovern." }
       ]
     },
@@ -280,7 +312,8 @@ const GameData = (function () {
       title: "A Sickness Spreads",
       text: "Several villagers have fallen ill with a wasting fever.",
       options: [
-        { text: "Consult the local witch", effect: { faction: "witch", relationship: 6, stability: 2, herbs: -6 }, chronicle: "The Hollow Witch was consulted over the sickness." },
+        { text: "Consult the local witch", effect: { faction: "witch", relationship: 6, stability: 2, herbs: -6 }, chronicle: "The Hollow Witch was consulted over the sickness.",
+          followUp: { eventId: "witch_calls_favor", delayTurns: 10 } },
         { text: "Rely on the physician", effect: { herbs: -10, stability: 3 }, chronicle: "The settlement's physician tended the sick." },
         { text: "Isolate the afflicted", effect: { stability: -3, population: -1 }, chronicle: "The afflicted were isolated from the rest of the settlement." }
       ]
@@ -290,8 +323,10 @@ const GameData = (function () {
       title: "The Grey Company Demands Tribute",
       text: "A rider from the Grey Company demands coin in exchange for leaving the roads unmolested.",
       options: [
-        { text: "Pay the tribute", effect: { coin: -30, faction: "bandits", relationship: 10 }, chronicle: "Tribute was paid to the Grey Company." },
-        { text: "Refuse and fortify", effect: { faction: "bandits", relationship: -15, stability: -1 }, chronicle: "The Grey Company's demand was refused." },
+        { text: "Pay the tribute", effect: { coin: -30, faction: "bandits", relationship: 10 }, chronicle: "Tribute was paid to the Grey Company.",
+          followUp: { eventId: "bandits_return_demand", delayTurns: 6 } },
+        { text: "Refuse and fortify", effect: { faction: "bandits", relationship: -15, stability: -1 }, chronicle: "The Grey Company's demand was refused.",
+          followUp: { eventId: "bandits_retaliate", delayTurns: 4 } },
         { text: "Ask Duren's Watch for help", effect: { faction: "garrison", relationship: 5, coin: -10 }, chronicle: "Duren's Watch was asked to intervene against the Grey Company." }
       ]
     },
@@ -327,7 +362,8 @@ const GameData = (function () {
       title: "Grimstone Kin Offer Apprenticeship",
       text: "The dwarves of Grimstone Kin offer to take on apprentices to teach masonry.",
       options: [
-        { text: "Send apprentices", effect: { faction: "dwarves", relationship: 8, knowledge: 10 }, chronicle: "Apprentices were sent to learn masonry from the Grimstone Kin." },
+        { text: "Send apprentices", effect: { faction: "dwarves", relationship: 8, knowledge: 10 }, chronicle: "Apprentices were sent to learn masonry from the Grimstone Kin.",
+          followUp: { eventId: "apprentices_return", delayTurns: 8 } },
         { text: "Decline politely", effect: {}, chronicle: "The Grimstone Kin's offer of apprenticeship was declined." }
       ]
     },
@@ -401,7 +437,8 @@ const GameData = (function () {
       title: "The Hollow Witch Makes an Offer",
       text: "Zuzka offers a remedy for the settlement's ailing herd, for a price only she would ask.",
       options: [
-        { text: "Accept the bargain", effect: { faction: "witch", relationship: 10, stability: -2, food: 10 }, chronicle: "A bargain was struck with the Hollow Witch." },
+        { text: "Accept the bargain", effect: { faction: "witch", relationship: 10, stability: -2, food: 10 }, chronicle: "A bargain was struck with the Hollow Witch.",
+          followUp: { eventId: "witch_price_due", delayTurns: 12 } },
         { text: "Refuse", effect: { food: -8 }, chronicle: "The Hollow Witch's bargain was refused." }
       ]
     },
@@ -432,6 +469,104 @@ const GameData = (function () {
         { text: "Hire the witcher", effect: { coin: -25, faction: "witcher", relationship: 5 }, chronicle: "A witcher was hired to deal with the ghouls at the battlefield." },
         { text: "Avoid the area", effect: { reputation: -2 }, chronicle: "The old battlefield was left to the ghouls." }
       ]
+    },
+
+    // -------------------------------------------------------------
+    // CHAIN FOLLOW-UPS (Phase 2) — never drawn by the normal random roll
+    // (see `chainOnly: true`); only reached via another event's `followUp`.
+    // -------------------------------------------------------------
+    {
+      id: "refugees_settled_in", chainOnly: true,
+      title: "The Refugees Have Settled In",
+      text: "The elven refugees taken in months ago have found their footing, and their skills are proving useful.",
+      options: [
+        { text: "Celebrate their contribution", effect: { stability: 3, reputation: 4 }, chronicle: "The settlement celebrated the contribution of its newest residents." },
+        { text: "Let it pass unremarked", effect: { stability: 1 }, chronicle: "The refugees' quiet contribution went unremarked, but was not unnoticed." }
+      ]
+    },
+    {
+      id: "refugees_return_bitter", chainOnly: true,
+      title: "Turned Away, Now Trouble",
+      text: "Word reaches the settlement that some of the refugees turned away at the gate have fallen in with rough company on the roads.",
+      options: [
+        { text: "Send aid to make amends", effect: { coin: -15, reputation: 5 }, chronicle: "Aid was sent in an attempt to make amends with the refugees once turned away." },
+        { text: "Fortify against them", effect: { stability: -1, stone: -8 }, chronicle: "The settlement fortified itself against the refugees it once turned away." },
+        { text: "Ignore the matter", effect: { stability: -2 }, chronicle: "The fate of the refugees once turned away was ignored." }
+      ]
+    },
+    {
+      id: "noble_retaliates", chainOnly: true,
+      title: "House Rovern's Harsher Demand",
+      text: "Having been rebuffed once, Lord Rovern's steward returns with a far harsher levy, backed by an armed escort.",
+      options: [
+        { text: "Pay the harsher demand", effect: { coin: -35, faction: "noble", relationship: 6 }, chronicle: "A harsher demand from House Rovern was paid in full." },
+        { text: "Stand firm again", effect: { faction: "noble", relationship: -15, reputation: 6 },
+          chronicle: "The settlement stood firm against House Rovern a second time.",
+          followUp: { eventId: "noble_final_ultimatum", delayTurns: 6 } }
+      ]
+    },
+    {
+      id: "noble_final_ultimatum", chainOnly: true,
+      title: "House Rovern's Ultimatum",
+      text: "Lord Rovern's patience has run out. His steward delivers a final ultimatum: submit the disputed fields, or face open conflict.",
+      options: [
+        { text: "Submit fully", effect: { food: -12, faction: "noble", relationship: 20, reputation: -6 }, chronicle: "The settlement submitted fully to House Rovern's ultimatum." },
+        { text: "Reject and prepare for conflict", effect: { faction: "noble", relationship: -25, reputation: 10, stability: -4 }, chronicle: "House Rovern's ultimatum was rejected outright. War is no longer unthinkable." }
+      ]
+    },
+    {
+      id: "noble_asks_more", chainOnly: true,
+      title: "House Rovern Grows Bold",
+      text: "Emboldened by the tribute already paid, Lord Rovern's steward returns asking for a great deal more.",
+      options: [
+        { text: "Pay again", effect: { coin: -30, faction: "noble", relationship: 8 }, chronicle: "House Rovern was paid a second, larger tribute." },
+        { text: "Refuse this time", effect: { faction: "noble", relationship: -10, reputation: 5 }, chronicle: "House Rovern's second demand for tribute was refused." }
+      ]
+    },
+    {
+      id: "witch_calls_favor", chainOnly: true,
+      title: "The Hollow Witch Calls In a Favour",
+      text: "Zuzka appears at the edge of the settlement. The remedy she gave months ago, she says, was never free.",
+      options: [
+        { text: "Honour the favour", effect: { herbs: -8, faction: "witch", relationship: 10 }, chronicle: "A favour owed to the Hollow Witch was honoured." },
+        { text: "Refuse the favour", effect: { faction: "witch", relationship: -15, stability: -2 }, chronicle: "A favour owed to the Hollow Witch was refused. She did not take it well." }
+      ]
+    },
+    {
+      id: "bandits_return_demand", chainOnly: true,
+      title: "The Grey Company Returns",
+      text: "The Grey Company is back, and word among them is that this settlement pays without a fight.",
+      options: [
+        { text: "Pay again", effect: { coin: -40, faction: "bandits", relationship: 8 }, chronicle: "The Grey Company was paid a second tribute." },
+        { text: "Refuse this time", effect: { faction: "bandits", relationship: -20, reputation: 6 }, chronicle: "The Grey Company's second demand was refused outright." }
+      ]
+    },
+    {
+      id: "bandits_retaliate", chainOnly: true,
+      title: "The Grey Company Strikes Back",
+      text: "In answer to your refusal, the Grey Company raids an outlying storehouse before militia can respond.",
+      options: [
+        { text: "Rally the militia in pursuit", effect: { coin: -10, food: -15, stability: -1, reputation: 4 }, chronicle: "Militia pursued the Grey Company after their raid, at some cost." },
+        { text: "Absorb the loss and fortify", effect: { food: -20, stone: -10 }, chronicle: "The settlement absorbed the Grey Company's raid and moved to fortify." }
+      ]
+    },
+    {
+      id: "apprentices_return", chainOnly: true,
+      title: "The Apprentices Return",
+      text: "The apprentices sent to the Grimstone Kin return, having learned a good deal of dwarven stonecraft.",
+      options: [
+        { text: "Put their new skills to work", effect: { knowledge: 12, tools: 8 }, chronicle: "Apprentices returned from the Grimstone Kin and put their new skills to work." },
+        { text: "Send them back for further study", effect: { faction: "dwarves", relationship: 6, coin: -15 }, chronicle: "The apprentices were sent back to the Grimstone Kin for further study." }
+      ]
+    },
+    {
+      id: "witch_price_due", chainOnly: true,
+      title: "The Witch's Price Comes Due",
+      text: "Zuzka returns. The bargain struck long ago carried a price, and she has come to collect it.",
+      options: [
+        { text: "Pay the price demanded", effect: { stability: -6, coin: -25, faction: "witch", relationship: 12 }, chronicle: "The Hollow Witch's price was paid in full, whatever it cost." },
+        { text: "Refuse to pay", effect: { faction: "witch", relationship: -30, stability: -8 }, chronicle: "The Hollow Witch's price was refused. Ill fortune is said to follow such refusals." }
+      ]
     }
   ];
 
@@ -446,10 +581,53 @@ const GameData = (function () {
     opportunist:   { priorities: ["shortTerm"] }
   };
 
+  // ---------------------------------------------------------------
+  // MAP ADJACENCY (Phase 2)
+  // `building` and `near` are chain-root building ids or terrain strings.
+  // Bonuses are additive per matching orthogonal neighbour (a farm with
+  // river on two sides gets the bonus twice) — see engine.js `adjacencyBonusForTile`.
+  // ---------------------------------------------------------------
+  const ADJACENCY_RULES = [
+    { building: "farm",       near: "river",       bonus: { yieldMult: 0.15 }, desc: "Irrigation from the river" },
+    { building: "market",     near: "road",         bonus: { tradeBonus: 0.10 }, desc: "Roadside trade" },
+    { building: "workshop",   near: "mine",         bonus: { yieldMult: 0.10 }, desc: "Short haul for ore" },
+    { building: "house",      near: "shrine",       bonus: { stability: 0.05 }, desc: "Comfort of the faithful" },
+    { building: "guardhouse", near: "keep",         bonus: { defense: 3 },      desc: "Coordinated defense with the keep" },
+    { building: "market",     near: "storehouse",   bonus: { tradeBonus: 0.08 }, desc: "Goods close at hand" },
+    { building: "school",     near: "storehouse",   bonus: { yieldMult: 0.05 }, desc: "Old records recovered nearby" },
+    { building: "farm",       near: "well",         bonus: { yieldMult: 0.08 }, desc: "A ready water source" }
+  ];
+
+  // ---------------------------------------------------------------
+  // EDICTS (Phase 2) — toggleable standing policies, distinct from one-shot
+  // tech: each has an ongoing multiplier/flat effect for as long as it's active,
+  // and a minimum number of turns it must stay in that state before being
+  // switched again (see engine.js `toggleEdict`), so it's a real commitment.
+  // ---------------------------------------------------------------
+  const EDICTS = {
+    open_borders:   { name: "Open Borders",      cooldown: 6, effect: { growthMult: 1.4, stabilityFlat: -0.08 },
+                      desc: "Newcomers are welcomed freely, whoever they are. Faster growth, but old residents grumble." },
+    conscription:   { name: "Conscription",      cooldown: 6, effect: { militaryMult: 1.3, growthMult: 0.85 },
+                      desc: "Able hands are drilled for war at the cost of the fields and the cradle." },
+    high_taxation:  { name: "High Taxation",     cooldown: 6, effect: { coinMult: 1.25, stabilityFlat: -0.12 },
+                      desc: "The treasury swells. The people grumble, quietly for now." },
+    frugal_stores:  { name: "Frugal Stores",     cooldown: 6, effect: { coinMult: 0.9, stabilityFlat: 0.1 },
+                      desc: "Spending is watched closely. Slower profit, steadier nerves." },
+    devout_observance: { name: "Devout Observance", cooldown: 6, effect: { stabilityFlat: 0.15, knowledgeMult: 0.9 },
+                      desc: "Faith is placed above learning for now. Calmer, if a little incurious." },
+    open_scholarship: { name: "Open Scholarship", cooldown: 6, effect: { knowledgeMult: 1.25, coinMult: 0.95 },
+                      desc: "Coin is spent freely on books and teaching. The treasury feels it." },
+    forced_labour:  { name: "Forced Labour",     cooldown: 6, effect: { farmYieldMult: 1.2, stabilityFlat: -0.2 },
+                      desc: "Every hand is put to the harvest, willing or not. Yields rise, resentment rises faster." },
+    militia_reserve:{ name: "Militia Reserve",   cooldown: 6, effect: { militaryMult: 1.15, coinMult: 0.95 },
+                      desc: "A standing reserve is kept armed and ready, drawing on the treasury year-round." }
+  };
+
   return {
     STAGES, RESOURCE_INFO, STARTING_RESOURCES, WORKER_TYPES, JOBS, BUILDINGS,
     TECHS, FACTIONS, FACTION_ACTIONS, MONSTERS, EXPLORATION_SITES,
-    INTEREST_GROUPS, KINGDOM_EVENTS, LOCAL_EVENTS, PERSONALITIES
+    INTEREST_GROUPS, KINGDOM_EVENTS, LOCAL_EVENTS, PERSONALITIES, ADJACENCY_RULES, EDICTS,
+    FACTION_RELATIONS_SEED, FACTION_INCIDENTS
   };
 })();
 
