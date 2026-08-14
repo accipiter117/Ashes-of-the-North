@@ -196,6 +196,8 @@ const UI = (function () {
       if (!b.ruin) {
         const jobsHere = Object.keys((b.effect && b.effect.jobSlots) || {});
         if (jobsHere.length) html += '<div class="sub">Provides work: ' + jobsHere.map(j => D.JOBS[j].name).join(", ") + '</div>';
+        const adj = E.adjacencyBonusForTile(state, t);
+        if (adj) html += '<div class="tag good" style="display:block;margin-top:6px;padding:6px 8px">Adjacency: ' + adj.matched.join(" · ") + '</div>';
       }
       const chain = b.chain;
       const idx = chain.indexOf(t.building);
@@ -213,8 +215,11 @@ const UI = (function () {
         html += '<div class="sub">Choose a building to construct here:</div>';
         for (const id of options) {
           const b = D.BUILDINGS[id];
+          const preview = E.previewAdjacency(state, t.x, t.y, id);
           html += '<button class="btn block small" style="margin-bottom:6px;text-align:left" data-build="' + id + '">' +
-            b.name + ' — ' + costString(b.cost) + ' (' + b.buildTime + ' mo)</button>';
+            b.name + ' — ' + costString(b.cost) + ' (' + b.buildTime + ' mo)' +
+            (preview ? '<br><span style="color:var(--moss);font-size:11px">+ ' + preview.matched.join(", ") + '</span>' : '') +
+            '</button>';
         }
       }
     }
@@ -322,9 +327,29 @@ const UI = (function () {
 
   function citizenRowHtml(c) {
     const traitNames = c.traits.map(t => (E.TRAITS.find(x => x.id === t) || {}).name).filter(Boolean).join(", ");
+    let familyLine = "";
+    if (c.important) {
+      const parts = [];
+      if (c.partnerId) {
+        const partner = state.citizens.find(x => x.id === c.partnerId);
+        if (partner) parts.push("married to " + partner.name + (partner.alive ? "" : " (deceased)"));
+      }
+      if (c.childrenIds && c.childrenIds.length) {
+        const names = c.childrenIds.map(id => state.citizens.find(x => x.id === id)).filter(Boolean)
+          .map(ch => ch.name + (ch.alive ? "" : " (deceased)"));
+        if (names.length) parts.push((names.length === 1 ? "child: " : "children: ") + names.join(", "));
+      }
+      if (c.parentIds && c.parentIds.length) {
+        const names = c.parentIds.map(id => state.citizens.find(x => x.id === id)).filter(Boolean).map(p => p.name);
+        if (names.length) parts.push("child of " + names.join(" and "));
+      }
+      if (parts.length) familyLine = '<div class="citizen-meta" style="color:var(--ember-bright);margin-top:2px">' + parts.join(" · ") + '</div>';
+    }
     return '<div class="citizen-row">' +
       '<div><div class="citizen-name">' + (c.important ? '<span class="important-star">★</span>' : '') + c.name + '</div>' +
-      '<div class="citizen-meta">Age ' + c.age + (traitNames ? " · " + traitNames : "") + (c.age < 12 ? " · child" : "") + '</div></div>' +
+      '<div class="citizen-meta">Age ' + c.age + (traitNames ? " · " + traitNames : "") + (c.age < 12 ? " · child" : "") + '</div>' +
+      familyLine +
+      '</div>' +
       (c.age < 12
         ? '<span class="tag">too young</span>'
         : '<select class="job-select" data-cid="' + c.id + '">' + buildJobOptionsHtml(c) + '</select>') +
@@ -377,6 +402,9 @@ const UI = (function () {
   function renderDiplomacy() {
     const el = document.getElementById("view-diplomacy");
     let html = '<h2 class="section-title">Diplomacy</h2><p class="hint">Nearby factions remember your dealings. Trust affects whether an approach succeeds.</p>';
+
+    html += renderRegionalRelationsCard();
+
     for (const f of state.factions) {
       const pct = clamp01((f.relationship + 100) / 200) * 100;
       html += '<div class="card">' +
@@ -398,6 +426,42 @@ const UI = (function () {
         renderAll();
       });
     });
+  }
+
+  function relationLabel(v) {
+    if (v <= -50) return { text: "At War", cls: "bad" };
+    if (v <= -15) return { text: "Hostile", cls: "bad" };
+    if (v < 15) return { text: "Neutral", cls: "" };
+    if (v < 50) return { text: "Friendly", cls: "good" };
+    return { text: "Allied", cls: "good" };
+  }
+
+  // Shows how the region's factions feel about EACH OTHER, not just about the
+  // player — only pairs with a notable relationship (|value| >= 15) are shown, sorted
+  // by strength, to keep this a quick read rather than a full 10x10 matrix dump.
+  function renderRegionalRelationsCard() {
+    const pairs = [];
+    const seen = new Set();
+    for (const f of state.factions) {
+      if (!f.relations) continue;
+      for (const otherId in f.relations) {
+        const key = [f.id, otherId].sort().join("|");
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const val = f.relations[otherId];
+        if (Math.abs(val) < 15) continue;
+        const other = state.factions.find(x => x.id === otherId);
+        if (!other) continue;
+        pairs.push({ a: f.name, b: other.name, val });
+      }
+    }
+    pairs.sort((x, y) => Math.abs(y.val) - Math.abs(x.val));
+    if (pairs.length === 0) return "";
+    const rows = pairs.slice(0, 8).map(p => {
+      const label = relationLabel(p.val);
+      return '<div class="row"><span>' + p.a + ' ↔ ' + p.b + '</span><span class="tag ' + label.cls + '">' + label.text + '</span></div>';
+    }).join("");
+    return '<div class="card"><h3>Regional Relations</h3><p class="sub">How the region\'s factions see each other — this shifts on its own, separate from your own standing with each.</p>' + rows + '</div>';
   }
   function clamp01(v) { return Math.max(0, Math.min(1, v)); }
 
@@ -449,8 +513,27 @@ const UI = (function () {
       branches[t.branch] = branches[t.branch] || [];
       branches[t.branch].push(id);
     }
-    let html = '<h2 class="section-title">Development</h2>' +
-      '<p class="hint">Knowledge accumulates from scribes, teachers and alchemists. Spend it to develop the settlement.</p>';
+    let html = '<h2 class="section-title">Governance</h2>' +
+      '<p class="hint">Standing edicts shape the settlement for as long as they hold. Development below is a one-time technology tree.</p>';
+
+    html += '<div class="card"><h3>Edicts</h3>';
+    for (const id in D.EDICTS) {
+      const edict = D.EDICTS[id];
+      const record = state.edicts[id];
+      const active = !!(record && record.active);
+      const sinceTurn = record ? record.sinceTurn : -999;
+      const turnsSince = state.meta.turn - sinceTurn;
+      const onCooldown = turnsSince < edict.cooldown;
+      html += '<div class="row" style="align-items:flex-start">' +
+        '<div><strong>' + edict.name + '</strong>' + (active ? ' <span class="tag good">Active</span>' : '') +
+        '<div class="sub">' + edict.desc + '</div>' +
+        (onCooldown ? '<div class="sub">Can change again in ' + (edict.cooldown - turnsSince) + ' month(s)</div>' : '') + '</div>' +
+        '<button class="btn small' + (active ? ' danger' : '') + '" data-edict="' + id + '"' + (onCooldown ? ' disabled' : '') + '>' +
+        (active ? 'Repeal' : 'Declare') + '</button>' +
+        '</div>';
+    }
+    html += '</div>';
+
     for (const branch in branches) {
       html += '<div class="card"><h3>' + branch + '</h3>';
       for (const id of branches[branch]) {
@@ -471,6 +554,11 @@ const UI = (function () {
     el.querySelectorAll("[data-tech]").forEach(btn => btn.addEventListener("click", () => {
       const r = E.researchTech(state, btn.dataset.tech);
       if (!r.ok) toast(r.reason); else toast("New development unlocked.");
+      renderAll();
+    }));
+    el.querySelectorAll("[data-edict]").forEach(btn => btn.addEventListener("click", () => {
+      const r = E.toggleEdict(state, btn.dataset.edict);
+      if (!r.ok) toast(r.reason); else toast(r.active ? "Edict declared." : "Edict repealed.");
       renderAll();
     }));
   }
