@@ -346,6 +346,100 @@ function checkFinite(state, label) {
   console.log("Regression check OK: old saves missing the faction-relations matrix backfill cleanly");
 })();
 
+// --- Regression test: bigger grid must generate correctly and old saves must migrate losslessly ---
+(function testGridSizeAndMigration() {
+  const s = Engine.newGame("GridTest");
+  assert(s.grid.length === Engine.GRID_W * Engine.GRID_H, "fresh grid should have GRID_W*GRID_H tiles — got " + s.grid.length);
+  const ruinCount = s.grid.filter(t => ["keep", "shrine", "storehouse"].includes(t.building)).length;
+  assert(ruinCount === 3, "fresh grid should have exactly 3 ruin anchors, got " + ruinCount);
+
+  // Simulate an old, smaller pre-expansion save and confirm migration preserves it exactly.
+  const old = Engine.newGame("OldGridTest");
+  old.grid = old.grid.filter(t => t.x < 10 && t.y < 7);
+  const oldFarmTile = old.grid.find(t => t.x === 5 && t.y === 5);
+  oldFarmTile.building = "farm3"; oldFarmTile.tier = 2;
+  const oldTileCount = old.grid.length;
+  Engine.saveGame(old);
+  const loaded = Engine.loadGame();
+  assert(loaded.ok, "loading an old small-grid save should not fail");
+  assert(loaded.state.grid.length === Engine.GRID_W * Engine.GRID_H, "migration should grow the grid to the current full size");
+  const migratedFarm = loaded.state.grid.find(t => t.x === 5 && t.y === 5);
+  assert(migratedFarm.building === "farm3" && migratedFarm.tier === 2, "a building the player already placed must survive grid migration unchanged");
+  console.log("Regression check OK: grid is " + s.grid.length + " tiles, and an old " + oldTileCount + "-tile save migrates losslessly to full size");
+})();
+
+// --- Regression test: demolition must refund, clear the tile, and protect founding monuments ---
+(function testDemolition() {
+  const s = Engine.newGame("DemolishTest");
+  const t = s.grid.find(g => g.terrain === "field" && !g.building);
+  const r = Engine.queueConstruction(s, t.x, t.y, "farm");
+  assert(r.ok, "should be able to queue a farm for the demolition test");
+  // Finish construction instantly for the test rather than waiting out buildTime.
+  t.constructing = null; t.building = "farm"; t.tier = 0;
+
+  const before = { wood: s.resources.wood };
+  const demo = Engine.demolishBuilding(s, t.x, t.y);
+  assert(demo.ok, "demolishing a normal building should succeed");
+  assert(t.building === null, "tile should be empty after demolition");
+  assert(s.resources.wood > before.wood, "demolishing should refund some materials — got no change (before=" + before.wood + ", after=" + s.resources.wood + ")");
+
+  const emptyDemo = Engine.demolishBuilding(s, t.x, t.y);
+  assert(!emptyDemo.ok, "demolishing an already-empty tile should fail cleanly");
+
+  const keepTile = s.grid.find(g => g.building === "keep");
+  const protectedDemo = Engine.demolishBuilding(s, keepTile.x, keepTile.y);
+  assert(!protectedDemo.ok, "the founding keep ruin should not be demolishable");
+  assert(keepTile.building === "keep", "protected monument should remain untouched after a refused demolition attempt");
+  console.log("Regression check OK: demolition refunds materials, clears the tile, and protects founding monuments");
+})();
+
+// --- Regression test: event effect magnitude scales with settlement population ---
+(function testEventMagnitudeScaling() {
+  function measureHarvestGain(targetPop) {
+    const s = Engine.newGame("ScaleTest");
+    while (Engine.population(s) < targetPop) {
+      s.citizens.push({
+        id: "extra" + s.citizens.length, name: "Extra Resident", age: 30, sex: "m", type: null, job: null,
+        important: false, traits: [], loyalty: null, happiness: 60, alive: true, history: [], arrivedTurn: 0,
+        partnerId: null, childrenIds: [], parentIds: []
+      });
+    }
+    const def = Data.LOCAL_EVENTS.find(e => e.id === "good_harvest");
+    s.activeEvent = { id: def.id, title: def.title, text: def.text, options: def.options };
+    const before = s.resources.food;
+    const idx = def.options.findIndex(o => o.text === "Store the surplus");
+    Engine.resolveEvent(s, idx);
+    return s.resources.food - before;
+  }
+  const low = measureHarvestGain(5);
+  const high = measureHarvestGain(200);
+  assert(high > low * 3, "a populous, late-game settlement should get a meaningfully larger event payoff than a tiny one — got pop5=" + low + " pop200=" + high);
+  console.log("Regression check OK: event magnitude scales with population (pop5 -> " + low + ", pop200 -> " + high + ")");
+})();
+
+// --- Regression test: event cooldown prevents the same random event repeating too soon ---
+(function testEventCooldownSpacing() {
+  const s = Engine.newGame("CooldownTest");
+  const chainOnlyIds = new Set(Data.LOCAL_EVENTS.filter(e => e.chainOnly).map(e => e.id));
+  const lastSeen = {};
+  let violations = 0, totalFires = 0;
+  for (let i = 0; i < 400; i++) {
+    if (s.activeEvent) {
+      const id = s.activeEvent.id;
+      if (!chainOnlyIds.has(id)) {
+        if (lastSeen[id] !== undefined && (s.meta.turn - lastSeen[id]) < 18) violations++;
+        lastSeen[id] = s.meta.turn;
+      }
+      totalFires++;
+      Engine.resolveEvent(s, 0);
+    }
+    Engine.advanceTurn(s);
+  }
+  assert(totalFires > 20, "expected a reasonable number of events to fire over 400 turns to make this test meaningful — got " + totalFires);
+  assert(violations === 0, "a random-pool event repeated within its 18-turn cooldown window " + violations + " time(s)");
+  console.log("Regression check OK: event cooldown prevents repeats within the window (" + totalFires + " events observed, 0 violations)");
+})();
+
 let failures = 0;
 for (let trial = 0; trial < 5; trial++) {
   console.log("--- Trial " + trial + " ---");
