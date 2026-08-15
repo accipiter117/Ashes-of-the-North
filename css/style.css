@@ -201,15 +201,16 @@ select.job-select {
 /* ---------- EVENT / MODALS ---------- */
 .modal-overlay {
   position: fixed; inset: 0; background: rgba(8,9,11,0.72); backdrop-filter: blur(1px);
-  display: flex; align-items: flex-end; justify-content: center; z-index: 50;
+  display: flex; align-items: flex-start; justify-content: center; z-index: 50;
 }
 .modal-sheet {
-  background: var(--panel); border: 1px solid var(--border); border-bottom: none;
-  border-radius: 10px 10px 0 0; width: 100%; max-width: 720px; padding: 18px 16px 22px;
+  background: var(--panel); border: 1px solid var(--border); border-top: none;
+  border-radius: 0 0 10px 10px; width: 100%; max-width: 720px;
+  padding: max(18px, env(safe-area-inset-top)) 16px 22px;
   max-height: 86vh; overflow-y: auto;
-  animation: slideup .2s ease;
+  animation: slidedown .2s ease;
 }
-@keyframes slideup { from { transform: translateY(24px); opacity: 0; } to { transform:none; opacity:1; } }
+@keyframes slidedown { from { transform: translateY(-24px); opacity: 0; } to { transform: none; opacity: 1; } }
 .modal-sheet h2 { font-family: var(--font-display); font-size: 16px; margin: 0 0 8px; color: var(--ember-bright); letter-spacing: 0.03em; }
 .modal-sheet p.body-text { font-size: 13.5px; line-height: 1.55; color: var(--ink); margin: 0 0 14px; }
 .option-btn {
