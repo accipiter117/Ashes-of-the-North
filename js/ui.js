@@ -175,7 +175,7 @@ const UI = (function () {
       '<span class="zoom-level" id="zoomLevel">100%</span>' +
       '<button class="zoom-btn" id="zoomInBtn" title="Zoom in">+</button>' +
       '<button class="zoom-btn" id="zoomFitBtn" title="Reset zoom" style="width:auto;padding:0 10px;font-size:11px">Reset</button>' +
-      '<span class="zoom-hint">Drag or swipe to pan</span>' +
+      '<span class="zoom-hint">Pinch or use +/− · swipe to pan</span>' +
       '</div>';
 
     el.innerHTML =
@@ -197,11 +197,11 @@ const UI = (function () {
     });
 
     document.getElementById("zoomInBtn").addEventListener("click", () => {
-      mapZoom = Math.min(ZOOM_MAX, mapZoom + ZOOM_STEP);
+      mapZoom = clampZoom(mapZoom + ZOOM_STEP);
       applyZoom();
     });
     document.getElementById("zoomOutBtn").addEventListener("click", () => {
-      mapZoom = Math.max(ZOOM_MIN, mapZoom - ZOOM_STEP);
+      mapZoom = clampZoom(mapZoom - ZOOM_STEP);
       applyZoom();
     });
     document.getElementById("zoomFitBtn").addEventListener("click", () => {
@@ -209,10 +209,40 @@ const UI = (function () {
       applyZoom();
     });
 
+    // Pinch-to-zoom: two-finger touch changes tile size directly, same underlying
+    // mapZoom value the +/- buttons use. Deliberately simple (zooms from the map's
+    // top-left rather than tracking a pinch centre-point) to keep this robust across
+    // devices — swipe/pan after pinching gets you the rest of the way.
+    const pinchTarget = document.getElementById("mapWrap");
+    let pinchStartDist = null, pinchStartZoom = null;
+    pinchTarget.addEventListener("touchstart", (e) => {
+      if (e.touches.length === 2) {
+        pinchStartDist = touchDistance(e.touches[0], e.touches[1]);
+        pinchStartZoom = mapZoom;
+      }
+    }, { passive: true });
+    pinchTarget.addEventListener("touchmove", (e) => {
+      if (e.touches.length === 2 && pinchStartDist) {
+        e.preventDefault();
+        const dist = touchDistance(e.touches[0], e.touches[1]);
+        mapZoom = clampZoom(Math.round(pinchStartZoom * (dist / pinchStartDist)));
+        applyZoom();
+      }
+    }, { passive: false });
+    pinchTarget.addEventListener("touchend", (e) => {
+      if (e.touches.length < 2) { pinchStartDist = null; pinchStartZoom = null; }
+    });
+    pinchTarget.addEventListener("touchcancel", () => { pinchStartDist = null; pinchStartZoom = null; });
+
     applyZoom();
     const newWrap = document.getElementById("mapWrap");
     if (newWrap) { newWrap.scrollLeft = prevScrollLeft; newWrap.scrollTop = prevScrollTop; }
     if (selectedTile) renderTilePanel();
+  }
+  function clampZoom(v) { return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, v)); }
+  function touchDistance(t0, t1) {
+    const dx = t0.clientX - t1.clientX, dy = t0.clientY - t1.clientY;
+    return Math.sqrt(dx * dx + dy * dy);
   }
 
   function renderMilitarySummaryCard() {
@@ -229,19 +259,40 @@ const UI = (function () {
     const panel = document.getElementById("tilePanel");
     const t = E.tileAt(state.grid, selectedTile.x, selectedTile.y);
     if (!t) { panel.innerHTML = ""; return; }
-    let html = '<div class="card"><h3>Tile (' + t.x + ', ' + t.y + ') — ' + t.terrain[0].toUpperCase() + t.terrain.slice(1) + '</h3>';
+
+    const terrainLabel = t.terrain[0].toUpperCase() + t.terrain.slice(1);
+    let headerTitle;
+    if (t.constructing) {
+      headerTitle = D.BUILDINGS[t.constructing.buildingId].name + " (under construction)";
+    } else if (t.building) {
+      headerTitle = D.BUILDINGS[t.building].name;
+    } else {
+      headerTitle = terrainLabel + " (empty)";
+    }
+    let html = '<div class="card"><h3>' + headerTitle + '</h3><div class="sub">Tile (' + t.x + ', ' + t.y + ') — ' + terrainLabel + ' ground</div>';
 
     if (t.constructing) {
       const b = D.BUILDINGS[t.constructing.buildingId];
       const pct = Math.round(100 * (1 - t.constructing.remaining / t.constructing.totalTime));
-      html += '<div class="sub">Constructing: ' + b.name + ' (' + pct + '% complete, ~' + Math.max(1, t.constructing.remaining) + ' month(s) left)</div>';
+      html += '<div class="sub">' + pct + '% complete, ~' + Math.max(1, t.constructing.remaining) + ' month(s) left</div>';
       html += '<button class="btn danger small" id="cancelBuildBtn">Cancel &amp; Reclaim Materials</button>';
     } else if (t.building) {
       const b = D.BUILDINGS[t.building];
       html += '<div class="sub">' + (b.ruin ? "A ruin from before the war. Restoring it will require materials." : describeBuildingEffect(b)) + '</div>';
       if (!b.ruin) {
         const jobsHere = Object.keys((b.effect && b.effect.jobSlots) || {});
-        if (jobsHere.length) html += '<div class="sub">Provides work: ' + jobsHere.map(j => D.JOBS[j].name).join(", ") + '</div>';
+        if (jobsHere.length) {
+          // The game tracks workers by job across every building of this type
+          // settlement-wide, not per physical tile — so this shows how full each
+          // job is overall (a fair, honest stand-in for "who works here" without
+          // implying a specific citizen is tied to this exact tile).
+          html += '<div class="sub" style="margin-top:4px">Jobs here, settlement-wide occupancy:</div>';
+          html += '<div style="margin:4px 0 2px">' + jobsHere.map(j => {
+            const used = E.jobCapacityUsed(state, j), max = E.jobCapacityMax(state, j);
+            const full = max !== 999 && used >= max;
+            return '<span class="tag' + (full ? ' good' : '') + '" style="margin:2px 4px 2px 0">' + D.JOBS[j].name + ' ' + used + '/' + (max === 999 ? '∞' : max) + '</span>';
+          }).join("") + '</div>';
+        }
         const adj = E.adjacencyBonusForTile(state, t);
         if (adj) html += '<div class="tag good" style="display:block;margin-top:6px;padding:6px 8px">Adjacency: ' + adj.matched.join(" · ") + '</div>';
       }
