@@ -11,38 +11,40 @@
 <body>
 
 <div id="app">
-  <header id="topbar">
-    <div class="brand">
-      <span class="brand-mark"></span>
-      <h1 id="settlementTitle">Ashes of the North</h1>
-    </div>
-    <div id="dateDisplay"></div>
-  </header>
+  <div id="mainCol">
+    <header id="topbar">
+      <div class="brand">
+        <span class="brand-mark"></span>
+        <h1 id="settlementTitle">Ashes of the North</h1>
+      </div>
+      <div id="dateDisplay"></div>
+    </header>
 
-  <div id="resourceBar"></div>
+    <div id="resourceBar"></div>
 
-  <main id="views">
-    <section id="view-settlement" class="view active"></section>
-    <section id="view-citizens" class="view"></section>
-    <section id="view-build" class="view"></section>
-    <section id="view-diplomacy" class="view"></section>
-    <section id="view-explore" class="view"></section>
-    <section id="view-research" class="view"></section>
-    <section id="view-chronicle" class="view"></section>
-    <section id="view-menu" class="view"></section>
-  </main>
+    <main id="views">
+      <section id="view-settlement" class="view active"></section>
+      <section id="view-citizens" class="view"></section>
+      <section id="view-build" class="view"></section>
+      <section id="view-diplomacy" class="view"></section>
+      <section id="view-explore" class="view"></section>
+      <section id="view-research" class="view"></section>
+      <section id="view-chronicle" class="view"></section>
+      <section id="view-menu" class="view"></section>
+    </main>
+  </div>
 
   <button id="turnBtn" title="Advance to the next month">Advance<br><span id="turnBtnSeason">Turn</span></button>
 
   <nav id="bottomNav">
-    <button class="nav-btn active" data-view="settlement"><span class="nav-icon">🏘</span>Settlement</button>
-    <button class="nav-btn" data-view="citizens"><span class="nav-icon">👥</span>People</button>
-    <button class="nav-btn" data-view="build"><span class="nav-icon">🔨</span>Build</button>
-    <button class="nav-btn" data-view="diplomacy"><span class="nav-icon">🕯</span>Diplomacy</button>
-    <button class="nav-btn" data-view="explore"><span class="nav-icon">🧭</span>Explore</button>
-    <button class="nav-btn" data-view="research"><span class="nav-icon">📜</span>Governance</button>
-    <button class="nav-btn" data-view="chronicle"><span class="nav-icon">📖</span>Chronicle</button>
-    <button class="nav-btn" data-view="menu"><span class="nav-icon">⚙</span>Menu</button>
+    <button class="nav-btn active" data-view="settlement"><span class="nav-icon">🏘</span><span class="nav-label">Settlement</span></button>
+    <button class="nav-btn" data-view="citizens"><span class="nav-icon">👥</span><span class="nav-label">People</span></button>
+    <button class="nav-btn" data-view="build"><span class="nav-icon">🔨</span><span class="nav-label">Build</span></button>
+    <button class="nav-btn" data-view="diplomacy"><span class="nav-icon">🕯</span><span class="nav-label">Diplomacy</span></button>
+    <button class="nav-btn" data-view="explore"><span class="nav-icon">🧭</span><span class="nav-label">Explore</span></button>
+    <button class="nav-btn" data-view="research"><span class="nav-icon">📜</span><span class="nav-label">Governance</span></button>
+    <button class="nav-btn" data-view="chronicle"><span class="nav-icon">📖</span><span class="nav-label">Chronicle</span></button>
+    <button class="nav-btn" data-view="menu"><span class="nav-icon">⚙</span><span class="nav-label">Menu</span></button>
   </nav>
 </div>
 
