@@ -54,6 +54,14 @@ try {
 
   doc = window.document;
   function click(el) { el.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true })); }
+  // jsdom doesn't implement real Touch/TouchEvent constructors usably, but the pinch
+  // handler only duck-types `.touches[i].clientX/clientY`, so a plain Event with a
+  // manually-attached `touches` array exercises the real code path just fine.
+  function touchEvent(type, touches) {
+    const ev = new window.Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(ev, "touches", { value: touches, configurable: true });
+    return ev;
+  }
   function assert(cond, msg) { if (!cond) { failed = true; console.error("FAIL: " + msg); } else { console.log("OK: " + msg); } }
 
   // Start screen present
@@ -104,6 +112,17 @@ try {
   const zoomAfterReset = doc.getElementById("mapGrid").style.getPropertyValue("--tile-size");
   assert(zoomAfterReset === "30px", "reset button should return zoom to the 30px default — got " + zoomAfterReset);
 
+  // Pinch-to-zoom: two-finger touchstart then spreading the fingers apart on touchmove
+  // should zoom in, exactly like the +/- buttons but via a real gesture.
+  const pinchWrap = doc.getElementById("mapWrap");
+  const zoomBeforePinch = doc.getElementById("mapGrid").style.getPropertyValue("--tile-size");
+  pinchWrap.dispatchEvent(touchEvent("touchstart", [{ clientX: 100, clientY: 100 }, { clientX: 150, clientY: 100 }]));
+  pinchWrap.dispatchEvent(touchEvent("touchmove", [{ clientX: 50, clientY: 100 }, { clientX: 250, clientY: 100 }]));
+  const zoomDuringPinch = doc.getElementById("mapGrid").style.getPropertyValue("--tile-size");
+  assert(zoomDuringPinch !== zoomBeforePinch, "spreading two fingers apart should zoom the map in — got no change from " + zoomBeforePinch);
+  assert(parseInt(zoomDuringPinch) > parseInt(zoomBeforePinch), "spreading fingers apart should increase tile size, not decrease it");
+  pinchWrap.dispatchEvent(touchEvent("touchend", []));
+
   const mapWrapEl = doc.getElementById("mapWrap");
   mapWrapEl.scrollLeft = 123;
   // A full re-render (as any game action triggers) should preserve pan position rather
@@ -122,6 +141,15 @@ try {
   window.UI.renderAll();
   const builtTileEl = doc.querySelector('.tile[data-x="' + secondEmptyTile.dataset.x + '"][data-y="' + secondEmptyTile.dataset.y + '"]');
   click(builtTileEl);
+  // Regression check: the tile panel header must show the BUILDING name, not the
+  // underlying terrain — it was previously always showing terrain regardless of
+  // what was actually built there.
+  const tilePanelHeader = doc.querySelector("#tilePanel h3");
+  assert(!!tilePanelHeader, "tile panel header should be present after selecting a built tile");
+  assert(tilePanelHeader.textContent.includes("Farm"), "tile panel header should show the building name (Farm) for a built tile — got \"" + (tilePanelHeader && tilePanelHeader.textContent) + "\"");
+  assert(!tilePanelHeader.textContent.match(/^Field/), "tile panel header should NOT show the raw terrain name for a built tile — got \"" + tilePanelHeader.textContent + "\"");
+  const jobOccupancyText = doc.querySelector("#tilePanel").textContent;
+  assert(jobOccupancyText.includes("Farmer"), "tile panel should show job occupancy info (e.g. Farmer) for a building that provides work");
   const demolishBtn = doc.getElementById("demolishBtn");
   assert(!!demolishBtn, "demolish button present for a built, non-ruin tile");
   const woodBefore = window.UI.getState().resources.wood;
