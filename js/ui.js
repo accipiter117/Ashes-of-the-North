@@ -8,6 +8,8 @@ const UI = (function () {
   let state = null;
   let selectedTile = null;
   let citizenFilter = "idle"; // idle | all | important
+  let mapZoom = 30; // px per tile — see ZOOM_MIN/MAX/STEP below
+  const ZOOM_MIN = 16, ZOOM_MAX = 56, ZOOM_STEP = 6;
 
   function init(s) {
     state = s;
@@ -140,9 +142,23 @@ const UI = (function () {
     return "";
   }
 
+  function applyZoom() {
+    const gridEl = document.getElementById("mapGrid");
+    if (gridEl) gridEl.style.setProperty("--tile-size", mapZoom + "px");
+    const lvl = document.getElementById("zoomLevel");
+    if (lvl) lvl.textContent = Math.round((mapZoom / 30) * 100) + "%";
+  }
+
   function renderSettlement() {
     const el = document.getElementById("view-settlement");
-    let grid = '<div id="mapWrap"><div id="mapGrid" style="grid-template-columns:repeat(' + E.GRID_W + ',34px)">';
+    // Preserve pan position across a full re-render (triggered whenever game state
+    // changes) so building something or advancing a turn doesn't yank the view back
+    // to the top-left corner of a now much bigger map.
+    const prevWrap = document.getElementById("mapWrap");
+    const prevScrollLeft = prevWrap ? prevWrap.scrollLeft : 0;
+    const prevScrollTop = prevWrap ? prevWrap.scrollTop : 0;
+
+    let grid = '<div id="mapWrap"><div id="mapGrid" style="grid-template-columns:repeat(' + E.GRID_W + ',var(--tile-size))">';
     for (const t of state.grid) {
       const classes = ["tile", "terrain-" + t.terrain];
       if (t.building) classes.push("has-building");
@@ -153,19 +169,49 @@ const UI = (function () {
     }
     grid += '</div></div>';
 
+    const toolbar =
+      '<div class="map-toolbar">' +
+      '<button class="zoom-btn" id="zoomOutBtn" title="Zoom out">−</button>' +
+      '<span class="zoom-level" id="zoomLevel">100%</span>' +
+      '<button class="zoom-btn" id="zoomInBtn" title="Zoom in">+</button>' +
+      '<button class="zoom-btn" id="zoomFitBtn" title="Reset zoom" style="width:auto;padding:0 10px;font-size:11px">Reset</button>' +
+      '<span class="zoom-hint">Drag or swipe to pan</span>' +
+      '</div>';
+
     el.innerHTML =
       '<h2 class="section-title">' + state.settlementName + ' — ' + D.STAGES.find(s => s.id === state.meta.stage).name + '</h2>' +
       '<p class="hint">Tap a tile to inspect it, construct a new building, or upgrade what stands there. Dashed tiles are ruins from before the war.</p>' +
+      toolbar +
       grid +
       '<div id="tilePanel"></div>' +
       renderMilitarySummaryCard();
 
     el.querySelectorAll(".tile").forEach(elm => {
       elm.addEventListener("click", () => {
+        const prevSelected = el.querySelector(".tile.selected");
+        if (prevSelected) prevSelected.classList.remove("selected");
+        elm.classList.add("selected");
         selectedTile = { x: parseInt(elm.dataset.x), y: parseInt(elm.dataset.y) };
-        renderSettlement();
+        renderTilePanel();
       });
     });
+
+    document.getElementById("zoomInBtn").addEventListener("click", () => {
+      mapZoom = Math.min(ZOOM_MAX, mapZoom + ZOOM_STEP);
+      applyZoom();
+    });
+    document.getElementById("zoomOutBtn").addEventListener("click", () => {
+      mapZoom = Math.max(ZOOM_MIN, mapZoom - ZOOM_STEP);
+      applyZoom();
+    });
+    document.getElementById("zoomFitBtn").addEventListener("click", () => {
+      mapZoom = 30; // default tile size
+      applyZoom();
+    });
+
+    applyZoom();
+    const newWrap = document.getElementById("mapWrap");
+    if (newWrap) { newWrap.scrollLeft = prevScrollLeft; newWrap.scrollTop = prevScrollTop; }
     if (selectedTile) renderTilePanel();
   }
 
@@ -207,6 +253,9 @@ const UI = (function () {
       } else {
         html += '<div class="tag good">Maximum tier reached</div>';
       }
+      if (!b.ruin) {
+        html += '<button class="btn danger small" id="demolishBtn" style="margin-top:8px;margin-left:6px">Demolish (reclaim 30%)</button>';
+      }
     } else {
       const options = E.newBuildOptions(t);
       if (options.length === 0) {
@@ -235,6 +284,13 @@ const UI = (function () {
     if (upgradeBtn) upgradeBtn.addEventListener("click", () => {
       const r = E.queueUpgrade(state, t.x, t.y);
       if (!r.ok) toast(r.reason); else toast("Upgrade underway.");
+      renderAll();
+    });
+    const demolishBtn = document.getElementById("demolishBtn");
+    if (demolishBtn) demolishBtn.addEventListener("click", () => {
+      if (!confirm("Demolish this building? You'll reclaim some materials, but its tier progress is lost.")) return;
+      const r = E.demolishBuilding(state, t.x, t.y);
+      if (!r.ok) toast(r.reason); else toast("Building cleared — the tile is free again.");
       renderAll();
     });
     panel.querySelectorAll("[data-build]").forEach(btn => {
