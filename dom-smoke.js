@@ -88,6 +88,49 @@ try {
   click(buildBtn);
   assert(doc.querySelectorAll(".constructing").length >= 1, "construction started");
 
+  // Map zoom controls: grid tile count matches the bigger map, zoom buttons resize
+  // the grid via the CSS custom property, and pan position survives a re-render.
+  assert(doc.querySelectorAll(".tile").length === 280, "map should render all 280 tiles on the bigger grid — got " + doc.querySelectorAll(".tile").length);
+  const mapGridEl = doc.getElementById("mapGrid");
+  const zoomBefore = mapGridEl.style.getPropertyValue("--tile-size");
+  click(doc.getElementById("zoomInBtn"));
+  const zoomAfterIn = mapGridEl.style.getPropertyValue("--tile-size");
+  assert(zoomAfterIn !== zoomBefore, "zoom in should change the tile-size custom property (" + zoomBefore + " -> " + zoomAfterIn + ")");
+  click(doc.getElementById("zoomOutBtn"));
+  click(doc.getElementById("zoomOutBtn"));
+  const zoomAfterOut = doc.getElementById("mapGrid").style.getPropertyValue("--tile-size");
+  assert(zoomAfterOut !== zoomAfterIn, "zoom out should shrink the tile-size custom property again");
+  click(doc.getElementById("zoomFitBtn"));
+  const zoomAfterReset = doc.getElementById("mapGrid").style.getPropertyValue("--tile-size");
+  assert(zoomAfterReset === "30px", "reset button should return zoom to the 30px default — got " + zoomAfterReset);
+
+  const mapWrapEl = doc.getElementById("mapWrap");
+  mapWrapEl.scrollLeft = 123;
+  // A full re-render (as any game action triggers) should preserve pan position rather
+  // than snapping back to the top-left corner of a now much bigger map.
+  window.UI.renderAll();
+  assert(doc.getElementById("mapWrap").scrollLeft === 123, "pan/scroll position should survive a full re-render — got " + doc.getElementById("mapWrap").scrollLeft);
+
+  // Demolish: build a farm elsewhere, select it, and confirm the demolish button clears it.
+  const secondEmptyTile = Array.from(doc.querySelectorAll(".tile")).find(t => !t.classList.contains("has-building") && !t.classList.contains("constructing") && !t.classList.contains("terrain-river") && !t.classList.contains("terrain-hills"));
+  click(secondEmptyTile);
+  const farmBuildBtn = doc.querySelector('[data-build="farm"]');
+  assert(!!farmBuildBtn, "farm build option available for demolish test");
+  click(farmBuildBtn);
+  const farmTileState = window.UI.getState().grid.find(t => t.x === parseInt(secondEmptyTile.dataset.x) && t.y === parseInt(secondEmptyTile.dataset.y));
+  farmTileState.constructing = null; farmTileState.building = "farm"; farmTileState.tier = 0; // instantly finish for the test
+  window.UI.renderAll();
+  const builtTileEl = doc.querySelector('.tile[data-x="' + secondEmptyTile.dataset.x + '"][data-y="' + secondEmptyTile.dataset.y + '"]');
+  click(builtTileEl);
+  const demolishBtn = doc.getElementById("demolishBtn");
+  assert(!!demolishBtn, "demolish button present for a built, non-ruin tile");
+  const woodBefore = window.UI.getState().resources.wood;
+  window.confirm = () => true;
+  click(demolishBtn);
+  assert(window.UI.getState().resources.wood > woodBefore, "demolishing should refund some materials");
+  const clearedTile = window.UI.getState().grid.find(t => t.x === parseInt(secondEmptyTile.dataset.x) && t.y === parseInt(secondEmptyTile.dataset.y));
+  assert(clearedTile.building === null, "tile should be empty after demolishing via the UI");
+
   // Assign an idle citizen to a job via the citizens view
   click(doc.querySelector('.nav-btn[data-view="citizens"]'));
   const autoBtn = doc.getElementById("autoAssignBtn");
