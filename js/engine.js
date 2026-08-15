@@ -8,9 +8,9 @@ const GameEngine = (function () {
   const D = (typeof GameData !== "undefined") ? GameData : require("./data.js");
 
   const SAVE_KEY = "ashesOfTheNorth_save_v1";
-  const GRID_W = 10, GRID_H = 7;
+  const GRID_W = 20, GRID_H = 14;
   const BASE_CAMP_HOUSING = 14;
-  const MAX_NAMED_CITIZENS = 220;
+  const MAX_NAMED_CITIZENS = 600;
 
   const SEASONS = ["Spring", "Summer", "Autumn", "Winter"];
   const SEASON_FOOD_MULT = { Spring: 0.95, Summer: 1.3, Autumn: 1.15, Winter: 0.35 };
@@ -89,24 +89,50 @@ const GameEngine = (function () {
   // ---------------------------------------------------------------
   // GRID GENERATION
   // ---------------------------------------------------------------
+  // Shared terrain rule for any (x,y) on the current grid size — used both to build a
+  // fresh grid for new games and to extend an existing save's smaller grid (see
+  // `migrateGridToNewSize`) without disturbing anything the player has already built.
+  function terrainForCoord(x, y) {
+    if (x <= 2) return "river";
+    if (x >= GRID_W - 4 && y <= 3) return "hills";
+    if (y >= GRID_H - 3 && x > 5) return "forest";
+    if (y === 7 && x >= 3 && x <= GRID_W - 5) return "road";
+    return "field";
+  }
+
   function buildInitialGrid() {
     const grid = [];
     for (let y = 0; y < GRID_H; y++) {
       for (let x = 0; x < GRID_W; x++) {
-        let terrain = "field";
-        if (x === 0 || x === 1) terrain = "river";
-        else if (x >= GRID_W - 2 && y <= 1) terrain = "hills";
-        else if (y === GRID_H - 1 && x > 3) terrain = "forest";
-        else if (x === 5 && y === 3) terrain = "road";
-        grid.push({ x, y, terrain, building: null, tier: 0, constructing: null });
+        grid.push({ x, y, terrain: terrainForCoord(x, y), building: null, tier: 0, constructing: null });
       }
     }
     // Place the three ruin anchors near the centre
-    setBuilding(grid, 4, 2, "keep");
-    setBuilding(grid, 5, 2, "shrine");
-    setBuilding(grid, 4, 4, "storehouse");
+    setBuilding(grid, 9, 6, "keep");
+    setBuilding(grid, 10, 6, "shrine");
+    setBuilding(grid, 9, 8, "storehouse");
     return grid;
   }
+
+  // Grows an existing (possibly smaller, pre-Phase-2.1) save's grid out to the current
+  // GRID_W x GRID_H without touching a single tile the player already has — every new
+  // tile is purely additive. Safe to call on an already-current-size grid (no-op).
+  function migrateGridToNewSize(state) {
+    const existingCoords = new Set(state.grid.map(t => t.x + "," + t.y));
+    let added = 0;
+    for (let y = 0; y < GRID_H; y++) {
+      for (let x = 0; x < GRID_W; x++) {
+        const key = x + "," + y;
+        if (existingCoords.has(key)) continue;
+        state.grid.push({ x, y, terrain: terrainForCoord(x, y), building: null, tier: 0, constructing: null });
+        added++;
+      }
+    }
+    if (added > 0) {
+      chronicle(state, "New land to the east and south has been surveyed and opened for settlement — " + added + " new plots await.");
+    }
+  }
+
   function tileAt(grid, x, y) { return grid.find(t => t.x === x && t.y === y); }
   function setBuilding(grid, x, y, buildingId) {
     const t = tileAt(grid, x, y);
@@ -150,6 +176,7 @@ const GameEngine = (function () {
       kingdomEffects: [],
       edicts: {},
       scheduledEvents: [], // Phase 2: chained/delayed events queue
+      eventCooldowns: {}, // eventId -> last turn fired, reduces repetition over a long game
       flags: { tutorialSeen: false },
       stats: { deaths: 0, births: 0, battlesWon: 0, battlesLost: 0, eventsResolved: 0 }
     };
@@ -443,6 +470,32 @@ const GameEngine = (function () {
     const b = D.BUILDINGS[t.constructing.buildingId];
     for (const r in b.cost) state.resources[r] = round2((state.resources[r] || 0) + b.cost[r] * 0.5);
     t.constructing = null;
+    return { ok: true };
+  }
+
+  // The three ruin-derived monument chains anchor the settlement's founding story —
+  // deliberately not demolishable, same spirit as not letting a player delete their
+  // capital. Everything else can be cleared to make way for something better.
+  const PROTECTED_CHAIN_ROOTS = ["keep", "shrine", "storehouse"];
+
+  function demolishBuilding(state, x, y) {
+    const t = tileAt(state.grid, x, y);
+    if (!t) return { ok: false, reason: "Invalid tile." };
+    if (!t.building) return { ok: false, reason: "Nothing here to clear." };
+    if (t.constructing) return { ok: false, reason: "Cancel the construction in progress instead." };
+    const b = D.BUILDINGS[t.building];
+    if (!b) return { ok: false, reason: "Unknown building." };
+    if (PROTECTED_CHAIN_ROOTS.includes(b.chain[0])) {
+      return { ok: false, reason: "This monument is part of the settlement's founding and cannot be torn down." };
+    }
+    // 30% refund of the CURRENT tier's own cost (not the full cumulative cost of every
+    // tier that led to it) — enough to make clearing a mistake forgivable without
+    // making demolish-and-rebuild a profitable resource loop.
+    for (const r in b.cost) state.resources[r] = round2((state.resources[r] || 0) + b.cost[r] * 0.3);
+    const wasName = b.name;
+    t.building = null;
+    t.tier = 0;
+    logMsg(state, wasName + " was cleared to make way for something new.");
     return { ok: true };
   }
 
@@ -907,9 +960,41 @@ const GameEngine = (function () {
     if (state.activeEvent) return;
     if (maybeTriggerScheduledEvent(state)) return;
     if (!chance(0.35)) return;
-    const pool = D.LOCAL_EVENTS.filter(e => !e.chainOnly);
+    if (!state.eventCooldowns) state.eventCooldowns = {};
+    const fullPool = D.LOCAL_EVENTS.filter(e => !e.chainOnly);
+    // An event that just fired won't be drawn again for a while — spreads variety
+    // across a long playthrough instead of the same handful of events repeating every
+    // few turns. Falls back to the full pool if everything happens to be on cooldown
+    // (small pool / very early game) rather than silently skipping the roll.
+    const COOLDOWN_TURNS = 18;
+    let pool = fullPool.filter(e => {
+      const last = state.eventCooldowns[e.id];
+      return last === undefined || (state.meta.turn - last) >= COOLDOWN_TURNS;
+    });
+    if (pool.length === 0) pool = fullPool;
     const ev = pick(pool);
+    state.eventCooldowns[ev.id] = state.meta.turn;
     state.activeEvent = { id: ev.id, title: ev.title, text: ev.text, options: ev.options };
+  }
+
+  // Fixed absolute event effects (e.g. "-10 food") were sized for an early settlement
+  // and become invisible once stockpiles grow into the hundreds. This scales tangible,
+  // uncapped resources (food/wood/coin/knowledge/etc, identified by NOT having a `max`
+  // in RESOURCE_INFO) up with population, while leaving capped 0-100 meters (stability,
+  // reputation) and relationship/trust/population deltas — which are already meaningful
+  // at any scale — untouched.
+  function eventMagnitudeMult(state) {
+    return clamp(1 + population(state) / 40, 1, 6);
+  }
+  function scaleEventEffect(state, effect) {
+    if (!effect) return effect;
+    const mult = eventMagnitudeMult(state);
+    const scaled = {};
+    for (const key in effect) {
+      const info = D.RESOURCE_INFO[key];
+      scaled[key] = (info && !info.max) ? round2(effect[key] * mult) : effect[key];
+    }
+    return scaled;
   }
 
   function resolveEvent(state, optionIndex) {
@@ -917,7 +1002,7 @@ const GameEngine = (function () {
     const def = D.LOCAL_EVENTS.find(e => e.id === state.activeEvent.id);
     const opt = def.options[optionIndex];
     if (!opt) return { ok: false, reason: "Invalid option." };
-    applyEffectBundle(state, opt.effect);
+    applyEffectBundle(state, scaleEventEffect(state, opt.effect));
     if (opt.chronicle) chronicle(state, opt.chronicle);
     if (opt.followUp) {
       if (!state.scheduledEvents) state.scheduledEvents = [];
@@ -1121,7 +1206,9 @@ const GameEngine = (function () {
       if (!state.resourceCap) state.resourceCap = { food: 120 };
       if (!state.edicts) state.edicts = {};
       if (!state.scheduledEvents) state.scheduledEvents = [];
+      if (!state.eventCooldowns) state.eventCooldowns = {};
       if (state.factions && state.factions.some(f => !f.relations)) initFactionRelations(state.factions);
+      migrateGridToNewSize(state);
       return { ok: true, state };
     } catch (e) {
       return { ok: false, reason: "Save data is corrupted and could not be read." };
@@ -1142,7 +1229,7 @@ const GameEngine = (function () {
     getSeason, capacities, jobCapacityMax, jobCapacityUsed,
     assignJob, unassignJob, autoAssignIdle,
     idleCitizens, livingCitizens, citizensInJob, population,
-    newBuildOptions, queueConstruction, queueUpgrade, cancelConstruction,
+    newBuildOptions, queueConstruction, queueUpgrade, cancelConstruction, demolishBuilding,
     performFactionAction, faction,
     resolveEvent, exploreNext, researchTech,
     militaryStrength, legacyScore,
