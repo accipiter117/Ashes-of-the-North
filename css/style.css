@@ -177,6 +177,32 @@ p.hint { color: var(--ink-dim); font-size: 12.5px; margin: 4px 0 12px; line-heig
 .tile.terrain-hills { background: #33302a; }
 .tile.terrain-road { background: #2a2620; }
 .tile.terrain-settlement { background: #26211a; }
+
+/* ---------- SEASONAL TERRAIN PALETTE ----------
+   The rules above are Spring's palette (and the fallback before the game has set a
+   season at all). #app[data-season] is set by the UI every render from the current
+   in-game month, so the map's colours shift with the calendar the same way food
+   production and consumption already do. */
+#app[data-season="summer"] .tile.terrain-field:not(.has-building) { background: #3d4d1e; }
+#app[data-season="summer"] .tile.terrain-forest:not(.has-building) { background: #253a1c; }
+#app[data-season="summer"] .tile.terrain-river:not(.has-building) { background: #12454e; }
+#app[data-season="summer"] .tile.terrain-hills:not(.has-building) { background: #403823; }
+
+#app[data-season="autumn"] .tile.terrain-field:not(.has-building) { background: #4d3a17; }
+#app[data-season="autumn"] .tile.terrain-forest:not(.has-building) { background: #3c2a11; }
+#app[data-season="autumn"] .tile.terrain-river:not(.has-building) { background: #29424b; }
+#app[data-season="autumn"] .tile.terrain-hills:not(.has-building) { background: #3d331e; }
+
+#app[data-season="winter"] .tile.terrain-field:not(.has-building) { background: #3d4a56; }
+#app[data-season="winter"] .tile.terrain-forest:not(.has-building) { background: #29343c; }
+#app[data-season="winter"] .tile.terrain-river:not(.has-building) { background: #234852; }
+#app[data-season="winter"] .tile.terrain-hills:not(.has-building) { background: #474d52; }
+#app[data-season="winter"] .tile.terrain-field:not(.has-building),
+#app[data-season="winter"] .tile.terrain-forest:not(.has-building),
+#app[data-season="winter"] .tile.terrain-hills:not(.has-building),
+#app[data-season="winter"] .tile.terrain-road:not(.has-building) {
+  background-image: radial-gradient(circle at 28% 25%, rgba(255,255,255,0.10) 0, transparent 55%);
+}
 .tile.has-building { background: #2c2419; border-color: var(--ember-dark); }
 .tile.is-ruin { border-style: dashed; border-color: var(--blood); }
 .tile.constructing::after {
