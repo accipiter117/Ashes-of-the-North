@@ -199,7 +199,9 @@ const GameData = (function () {
     { id: "cultural_exchange", name: "Cultural Exchange",       cost: { influence: 5 }, effect: { relationship: 6, trust: 4 }, result: "knowledge", amount: 8 },
     { id: "diplomatic_gift",   name: "Send Diplomatic Gift",    cost: { coin: 20 },  effect: { relationship: 10, trust: 6 },  result: "none" },
     { id: "share_information", name: "Share Information",       cost: {},            effect: { trust: 5 },                   result: "none" },
-    { id: "invite_specialist", name: "Invite Specialist",       cost: { coin: 25, influence: 5 }, effect: { relationship: 2 }, result: "specialist" }
+    { id: "invite_specialist", name: "Invite Specialist",       cost: { coin: 25, influence: 5 }, effect: { relationship: 2 }, result: "specialist" },
+    { id: "form_alliance",     name: "Propose Formal Alliance", cost: { coin: 40, influence: 10 }, effect: {}, result: "alliance",
+      requiresRelationship: 70, requiresTrust: 70 }
   ];
 
   // ---------------------------------------------------------------
