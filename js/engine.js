@@ -1002,15 +1002,71 @@ const GameEngine = (function () {
     const def = D.LOCAL_EVENTS.find(e => e.id === state.activeEvent.id);
     const opt = def.options[optionIndex];
     if (!opt) return { ok: false, reason: "Invalid option." };
-    applyEffectBundle(state, scaleEventEffect(state, opt.effect));
-    if (opt.chronicle) chronicle(state, opt.chronicle);
-    if (opt.followUp) {
-      if (!state.scheduledEvents) state.scheduledEvents = [];
-      state.scheduledEvents.push({ eventId: opt.followUp.eventId, dueTurn: state.meta.turn + opt.followUp.delayTurns });
+    let combatWon = null;
+    if (opt.combatCheck) {
+      combatWon = resolveEventCombat(state, opt.combatCheck);
+    } else {
+      applyEffectBundle(state, scaleEventEffect(state, opt.effect));
+      if (opt.chronicle) chronicle(state, opt.chronicle);
+      if (opt.followUp) scheduleEvent(state, opt.followUp.eventId, opt.followUp.delayTurns);
     }
     state.activeEvent = null;
     state.stats.eventsResolved++;
-    return { ok: true };
+    return { ok: true, combatWon };
+  }
+
+  function scheduleEvent(state, eventId, delayTurns) {
+    if (!state.scheduledEvents) state.scheduledEvents = [];
+    state.scheduledEvents.push({ eventId, dueTurn: state.meta.turn + delayTurns });
+  }
+
+  // Generic combat resolution for any event option — reuses the same
+  // strength-vs-threat formula as the passive raid mechanic (triggerRaid) so a
+  // player's militia and fortifications actually matter here, not only when a
+  // hostile faction happens to raid on its own initiative. `strengthMult` /
+  // `defenseMult` let an individual option lean toward rewarding an active militia
+  // (sallying out to intercept) or fortification (holding behind walls) differently —
+  // that trade-off is deliberate: it gives both kinds of military investment a
+  // distinct, meaningful use instead of one flat "military strength" number.
+  // Read-only odds preview (no RNG, no state mutation) so the UI can show the player
+  // their estimated chance before they commit to a combat option — the whole point of
+  // this system is to make military investment visible and informative, not a blind
+  // guess dressed up as a choice.
+  function previewCombatChance(state, cc) {
+    const cap = capacities(state);
+    const strengthMult = cc.strengthMult !== undefined ? cc.strengthMult : 2;
+    const defenseMult = cc.defenseMult !== undefined ? cc.defenseMult : 1;
+    const trainingBonus = state.flags.trainingBonusTurns > 0 ? cap.trainingBonus + 0.15 : cap.trainingBonus;
+    const playerStrength = (militaryStrength(state) * strengthMult + cap.defense * defenseMult) * (1 + trainingBonus);
+    const total = playerStrength + cc.attackerStrength;
+    return total > 0 ? clamp(playerStrength / total, 0.05, 0.95) : 0.5;
+  }
+
+  function resolveEventCombat(state, cc) {
+    const cap = capacities(state);
+    const strengthMult = cc.strengthMult !== undefined ? cc.strengthMult : 2;
+    const defenseMult = cc.defenseMult !== undefined ? cc.defenseMult : 1;
+    const trainingBonus = state.flags.trainingBonusTurns > 0 ? cap.trainingBonus + 0.15 : cap.trainingBonus;
+    const playerStrength = (militaryStrength(state) * strengthMult + cap.defense * defenseMult) * (1 + trainingBonus);
+    const total = playerStrength + cc.attackerStrength;
+    const winChance = total > 0 ? clamp(playerStrength / total, 0.05, 0.95) : 0.5;
+    const win = chance(winChance);
+    if (win) {
+      state.stats.battlesWon++;
+      if (cc.winEffect) applyEffectBundle(state, scaleEventEffect(state, cc.winEffect));
+      if (cc.winChronicle) chronicle(state, cc.winChronicle);
+      const winCasualtyChance = cc.winCasualtyChance !== undefined ? cc.winCasualtyChance : 0;
+      if (chance(winCasualtyChance)) killRandomCitizen(state, "battle");
+      if (cc.winFollowUp) scheduleEvent(state, cc.winFollowUp.eventId, cc.winFollowUp.delayTurns);
+    } else {
+      state.stats.battlesLost++;
+      if (cc.loseEffect) applyEffectBundle(state, scaleEventEffect(state, cc.loseEffect));
+      if (cc.loseChronicle) chronicle(state, cc.loseChronicle);
+      const loseCasualtyChance = cc.loseCasualtyChance !== undefined ? cc.loseCasualtyChance : 0.3;
+      if (chance(loseCasualtyChance)) killRandomCitizen(state, "battle");
+      if (cc.loseFollowUp) scheduleEvent(state, cc.loseFollowUp.eventId, cc.loseFollowUp.delayTurns);
+    }
+    return win;
   }
 
   function applyEffectBundle(state, effect) {
@@ -1235,7 +1291,7 @@ const GameEngine = (function () {
     militaryStrength, legacyScore,
     saveGame, loadGame, hasSave, deleteSave,
     tileAt, isRuinTile, builtTiles, adjacencyBonusForTile, previewAdjacency,
-    toggleEdict, getFactionRelation
+    toggleEdict, getFactionRelation, previewCombatChance
   };
 })();
 
