@@ -440,6 +440,106 @@ function checkFinite(state, label) {
   console.log("Regression check OK: event cooldown prevents repeats within the window (" + totalFires + " events observed, 0 violations)");
 })();
 
+// --- Regression test: event combatCheck outcomes must actually depend on military strength ---
+(function testCombatCheckRespondsToStrength() {
+  function winRateFor(strengthLevel, trials) {
+    let wins = 0;
+    for (let i = 0; i < trials; i++) {
+      const s = Engine.newGame("CombatTest" + i);
+      if (strengthLevel === "high") {
+        for (let g = 0; g < 8; g++) {
+          const t = s.grid.find(t2 => t2.terrain === "field" && !t2.building);
+          t.building = "trainingyard"; t.tier = 2;
+        }
+        for (let c = 0; c < 20 && c < s.citizens.length; c++) {
+          Engine.assignJob(s, s.citizens[c].id, c % 3 === 0 ? "archer" : (c % 3 === 1 ? "guard" : "militia"));
+        }
+        for (let g = 0; g < 30; g++) {
+          if (s.citizens.length >= 20) break;
+          s.citizens.push({ id: "sold" + g, name: "Soldier", age: 25, sex: "m", type: "soldier", job: "militia",
+            important: false, traits: [], loyalty: null, happiness: 60, alive: true, history: [], arrivedTurn: 0,
+            partnerId: null, childrenIds: [], parentIds: [] });
+        }
+      }
+      // "low" strength uses the settlement exactly as newGame creates it — no soldiers assigned at all.
+      const def = Data.LOCAL_EVENTS.find(e => e.id === "raiders_on_road");
+      s.activeEvent = { id: def.id, title: def.title, text: def.text, options: def.options };
+      const idx = def.options.findIndex(o => o.text === "Muster the militia to intercept");
+      const r = Engine.resolveEvent(s, idx);
+      if (r.combatWon) wins++;
+    }
+    return wins / trials;
+  }
+  const lowWinRate = winRateFor("low", 60);
+  const highWinRate = winRateFor("high", 60);
+  assert(highWinRate > lowWinRate + 0.25,
+    "a well-armed, well-trained settlement should win a combatCheck event meaningfully more often than an undefended one — got low=" + lowWinRate.toFixed(2) + " high=" + highWinRate.toFixed(2));
+  console.log("Regression check OK: combatCheck win rate scales with military strength (undefended=" + lowWinRate.toFixed(2) + ", well-armed=" + highWinRate.toFixed(2) + ")");
+})();
+
+// --- Regression test: combatCheck applies the right effect for whatever outcome actually
+// occurs, and schedules the matching win/lose follow-up. Win chance is deliberately
+// clamped to [5%, 95%] even at extremes (see resolveEventCombat), so this checks
+// outcome-consistent effects across several trials rather than asserting a single
+// trial's result is certain — a truly "always guaranteed" outcome would itself be a bug.
+(function testCombatCheckEffectsAndFollowUp() {
+  function makeUndefendedSettlement(seed) {
+    return Engine.newGame("CombatEffectTest" + seed);
+  }
+  function makeOverwhelmingSettlement(seed) {
+    const s = Engine.newGame("CombatEffectTest2_" + seed);
+    for (let g = 0; g < 8; g++) {
+      const t = s.grid.find(t2 => t2.terrain === "field" && !t2.building);
+      t.building = "trainingyard"; t.tier = 2;
+    }
+    for (let g = 0; g < 40; g++) {
+      s.citizens.push({ id: "elite" + g, name: "Elite Soldier", age: 25, sex: "m", type: "soldier", job: "archer",
+        important: false, traits: [], loyalty: null, happiness: 60, alive: true, history: [], arrivedTurn: 0,
+        partnerId: null, childrenIds: [], parentIds: [] });
+    }
+    return s;
+  }
+
+  let sawLossWithCorrectEffectAndFollowUp = false;
+  let sawWinWithCorrectEffect = false;
+
+  for (let i = 0; i < 15; i++) {
+    // Undefended settlement vs a strong attacker — losing should be the common case,
+    // and every loss must apply loseEffect and schedule warband_returns.
+    const s = makeUndefendedSettlement(i);
+    const def = Data.LOCAL_EVENTS.find(e => e.id === "rival_warband");
+    s.activeEvent = { id: def.id, title: def.title, text: def.text, options: def.options };
+    const idx = def.options.findIndex(o => o.text === "Meet them in open battle");
+    const before = s.resources.stability;
+    const r = Engine.resolveEvent(s, idx);
+    assert(r.ok, "resolving a combatCheck option should succeed");
+    if (r.combatWon === false) {
+      assert(s.resources.stability < before, "on a loss, the loseEffect must apply (stability should drop)");
+      assert(s.scheduledEvents.some(ev => ev.eventId === "warband_returns"), "a loss must schedule the warband_returns follow-up");
+      sawLossWithCorrectEffectAndFollowUp = true;
+    } else {
+      assert(s.resources.stability > before || s.resources.reputation > 0, "on a win, the winEffect must apply, not the loseEffect");
+    }
+
+    // Overwhelmingly strong settlement vs a token attacker — winning should be the
+    // common case, and every win must apply winEffect (not loseEffect).
+    const s2 = makeOverwhelmingSettlement(i);
+    const nightDef = Data.LOCAL_EVENTS.find(e => e.id === "night_alarm");
+    s2.activeEvent = { id: nightDef.id, title: nightDef.title, text: nightDef.text, options: nightDef.options };
+    const idx2 = nightDef.options.findIndex(o => o.text === "Rally swiftly to the walls");
+    const stabBefore = s2.resources.stability;
+    const r2 = Engine.resolveEvent(s2, idx2);
+    if (r2.combatWon === true) {
+      assert(s2.resources.stability >= stabBefore, "on a win, the winEffect (stability +2) must apply, not the loseEffect");
+      sawWinWithCorrectEffect = true;
+    }
+  }
+
+  assert(sawLossWithCorrectEffectAndFollowUp, "an undefended settlement should lose at least once in 15 trials against a strong attacker, with the correct effect and follow-up applied when it does");
+  assert(sawWinWithCorrectEffect, "an overwhelmingly strong settlement should win at least once in 15 trials, with the correct effect applied when it does");
+  console.log("Regression check OK: combatCheck applies the outcome-correct effect and follow-up across multiple trials");
+})();
+
 let failures = 0;
 for (let trial = 0; trial < 5; trial++) {
   console.log("--- Trial " + trial + " ---");
