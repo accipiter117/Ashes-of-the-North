@@ -89,6 +89,10 @@ const UI = (function () {
     document.getElementById("dateDisplay").innerHTML =
       season + ", Year " + state.meta.year + '<span class="stage-tag">' + stageName + '</span>';
     document.getElementById("turnBtnSeason").textContent = season;
+    // Drives the seasonal terrain palette (see css `[data-season]` rules) — set on
+    // #app rather than just the map so any future seasonal theming has the hook too.
+    const appEl = document.getElementById("app");
+    if (appEl) appEl.dataset.season = season.toLowerCase();
   }
 
   function fmt(v) {
@@ -724,7 +728,14 @@ const UI = (function () {
       '<div class="modal-overlay"><div class="modal-sheet">' +
       '<h2>' + ev.title + '</h2>' +
       '<p class="body-text">' + ev.text + '</p>' +
-      ev.options.map((o, i) => '<button class="option-btn" data-opt="' + i + '">' + o.text + '</button>').join("") +
+      ev.options.map((o, i) => {
+        let oddsTag = "";
+        if (o.combatCheck) {
+          const pct = Math.round(E.previewCombatChance(state, o.combatCheck) * 100);
+          oddsTag = ' <span class="tag' + (pct >= 55 ? " good" : (pct <= 35 ? " bad" : "")) + '">⚔ ' + pct + '% odds</span>';
+        }
+        return '<button class="option-btn" data-opt="' + i + '">' + o.text + oddsTag + '</button>';
+      }).join("") +
       '</div></div>';
     root.querySelectorAll("[data-opt]").forEach(btn => {
       btn.addEventListener("click", () => {
