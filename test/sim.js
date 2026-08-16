@@ -540,6 +540,41 @@ function checkFinite(state, label) {
   console.log("Regression check OK: combatCheck applies the outcome-correct effect and follow-up across multiple trials");
 })();
 
+// --- Regression test: alliance eligibility gate, one-time constraint, and military bonus ---
+(function testAllianceMechanic() {
+  const s = Engine.newGame("AllianceTest");
+  s.resources.coin = 1000; s.resources.influence = 1000;
+
+  // Not eligible yet — a fresh faction starts well below the 70/70 threshold.
+  const tooEarly = Engine.performFactionAction(s, "heddon", "form_alliance");
+  assert(!tooEarly.ok, "forming an alliance before reaching the relationship/trust threshold should be rejected");
+  assert(!s.factions.find(f => f.id === "heddon").allied, "faction should not be marked allied after a rejected attempt");
+
+  // Push relationship/trust up directly (bypassing the slow diplomatic grind, which
+  // is already covered by other tests) to isolate the gate/unlock logic itself.
+  const heddon = s.factions.find(f => f.id === "heddon");
+  heddon.relationship = 75; heddon.trust = 80;
+  const strengthBefore = Engine.militaryStrength(s);
+  // The approach still has its own success roll (capped at 95%, same clamped-probability
+  // pattern as combat odds) separate from the eligibility gate, so retry a bounded
+  // number of times rather than assuming the very first attempt must succeed.
+  let allied = null;
+  for (let i = 0; i < 30 && !(allied && allied.success); i++) {
+    heddon.relationship = Math.max(heddon.relationship, 75); // a failed roll dings relationship slightly; keep it above threshold
+    allied = Engine.performFactionAction(s, "heddon", "form_alliance");
+  }
+  assert(allied.ok && allied.success, "forming an alliance once eligible should eventually succeed within 30 attempts");
+  assert(heddon.allied === true, "faction should be marked allied after a successful alliance");
+  const strengthAfter = Engine.militaryStrength(s);
+  assert(strengthAfter > strengthBefore, "an ally should measurably increase military strength — got before=" + strengthBefore + " after=" + strengthAfter);
+
+  // One-time only — can't form the same alliance twice.
+  const again = Engine.performFactionAction(s, "heddon", "form_alliance");
+  assert(!again.ok, "attempting to form an alliance with an already-allied faction should be rejected");
+
+  console.log("Regression check OK: alliance requires threshold relationship/trust, is one-time, and measurably strengthens the settlement's military");
+})();
+
 let failures = 0;
 for (let trial = 0; trial < 5; trial++) {
   console.log("--- Trial " + trial + " ---");
