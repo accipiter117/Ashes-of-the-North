@@ -252,8 +252,12 @@ const UI = (function () {
   function renderMilitarySummaryCard() {
     const cap = E.capacities(state);
     const str = E.militaryStrength(state).toFixed(1);
+    const pop = E.population(state);
+    const overcrowded = pop > cap.housing;
     return '<div class="card"><h3>Settlement Overview</h3>' +
-      '<div class="row"><span>Population</span><span>' + E.population(state) + ' / ' + cap.housing + ' housed</span></div>' +
+      '<div class="row"><span>Population</span><span>' + pop + ' / ' + cap.housing + ' housed' +
+        (overcrowded ? ' <span class="tag bad">overcrowded</span>' : '') + '</span></div>' +
+      (overcrowded ? '<div class="sub" style="color:var(--blood-bright);margin-top:-2px">Growth slows until more housing is built.</div>' : '') +
       '<div class="row"><span>Military Strength</span><span>' + str + '</span></div>' +
       '<div class="row"><span>Defense</span><span>' + cap.defense.toFixed(0) + '</span></div>' +
       '<div class="row"><span>Legacy Score</span><span>' + E.legacyScore(state) + '</span></div></div>';
@@ -518,13 +522,23 @@ const UI = (function () {
 
     for (const f of state.factions) {
       const pct = clamp01((f.relationship + 100) / 200) * 100;
+      const allianceAction = D.FACTION_ACTIONS.find(a => a.id === "form_alliance");
+      const regularActions = D.FACTION_ACTIONS.filter(a => a.id !== "form_alliance");
+      const allianceEligible = f.relationship >= allianceAction.requiresRelationship && f.trust >= allianceAction.requiresTrust;
       html += '<div class="card">' +
         '<div class="faction-header"><h3>' + f.name + '</h3><span class="tag">' + f.type + '</span></div>' +
         '<div class="sub">' + f.desc + ' — led by ' + f.leader + '</div>' +
         '<div class="rel-bar"><div class="rel-bar-fill" style="width:' + pct + '%"></div><div class="rel-bar-mid"></div></div>' +
-        '<div class="sub">Relationship ' + Math.round(f.relationship) + ' · Trust ' + Math.round(f.trust) + (f.tradeAgreement ? ' · <span class="tag good">Trade Agreement</span>' : '') + '</div>' +
+        '<div class="sub">Relationship ' + Math.round(f.relationship) + ' · Trust ' + Math.round(f.trust) +
+          (f.tradeAgreement ? ' · <span class="tag good">Trade Agreement</span>' : '') +
+          (f.allied ? ' · <span class="tag good">Allied</span>' : '') + '</div>' +
+        (f.allied ? '' :
+          '<button class="btn' + (allianceEligible ? ' primary' : '') + ' block small" style="margin-top:8px" data-faction="' + f.id + '" data-action="form_alliance"' + (allianceEligible ? '' : ' disabled') + '>' +
+            'Propose Formal Alliance (' + costString(allianceAction.cost) + ')' +
+            (allianceEligible ? '' : ' — needs ' + allianceAction.requiresRelationship + '+ relationship & ' + allianceAction.requiresTrust + '+ trust') +
+          '</button>') +
         '<div class="grid2" style="margin-top:8px">' +
-        D.FACTION_ACTIONS.map(a => '<button class="btn small" data-faction="' + f.id + '" data-action="' + a.id + '">' + a.name +
+        regularActions.map(a => '<button class="btn small" data-faction="' + f.id + '" data-action="' + a.id + '">' + a.name +
           (Object.keys(a.cost).length ? ' (' + costString(a.cost) + ')' : '') + '</button>').join("") +
         '</div></div>';
     }
