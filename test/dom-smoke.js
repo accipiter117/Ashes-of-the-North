@@ -224,6 +224,20 @@ try {
   assert(doc.getElementById("saveBtn") !== null, "menu save button present");
   click(doc.getElementById("saveBtn"));
 
+  // Overcrowding indicator: force population above housing capacity and confirm the
+  // Settlement view surfaces a visible warning rather than silently throttling growth.
+  click(doc.querySelector('.nav-btn[data-view="settlement"]'));
+  const s = window.UI.getState();
+  const cap = window.GameEngine.capacities(s);
+  while (window.GameEngine.population(s) <= cap.housing) {
+    s.citizens.push({ id: "crowd" + s.citizens.length, name: "Extra Resident", age: 30, sex: "m", type: null, job: null,
+      important: false, traits: [], loyalty: null, happiness: 60, alive: true, history: [], arrivedTurn: 0,
+      partnerId: null, childrenIds: [], parentIds: [] });
+  }
+  window.UI.renderAll();
+  const overcrowdTag = Array.from(doc.querySelectorAll(".tag.bad")).find(t => t.textContent.includes("overcrowded"));
+  assert(!!overcrowdTag, "an 'overcrowded' warning tag should appear on the Settlement view when population exceeds housing");
+
   // Defense scenario odds preview: force a known combatCheck event and confirm the
   // event modal shows a "⚔ X% odds" tag on the combat option — this is the whole
   // point of the odds-preview feature, so verify it end-to-end through the real modal.
