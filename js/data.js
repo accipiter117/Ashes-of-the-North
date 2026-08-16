@@ -546,7 +546,10 @@ const GameData = (function () {
       title: "The Grey Company Strikes Back",
       text: "In answer to your refusal, the Grey Company raids an outlying storehouse before militia can respond.",
       options: [
-        { text: "Rally the militia in pursuit", effect: { coin: -10, food: -15, stability: -1, reputation: 4 }, chronicle: "Militia pursued the Grey Company after their raid, at some cost." },
+        { text: "Rally the militia in pursuit", combatCheck: {
+            attackerStrength: 24, strengthMult: 2, defenseMult: 0.3, loseCasualtyChance: 0.25,
+            winEffect: { coin: 10, reputation: 6 }, winChronicle: "Militia pursued the Grey Company and recovered much of what was taken.",
+            loseEffect: { coin: -10, food: -15, stability: -1 }, loseChronicle: "Militia pursued the Grey Company after their raid, at some cost." } },
         { text: "Absorb the loss and fortify", effect: { food: -20, stone: -10 }, chronicle: "The settlement absorbed the Grey Company's raid and moved to fortify." }
       ]
     },
@@ -566,6 +569,123 @@ const GameData = (function () {
       options: [
         { text: "Pay the price demanded", effect: { stability: -6, coin: -25, faction: "witch", relationship: 12 }, chronicle: "The Hollow Witch's price was paid in full, whatever it cost." },
         { text: "Refuse to pay", effect: { faction: "witch", relationship: -30, stability: -8 }, chronicle: "The Hollow Witch's price was refused. Ill fortune is said to follow such refusals." }
+      ]
+    },
+
+    // -------------------------------------------------------------
+    // DEFENSE SCENARIOS — options with `combatCheck` resolve against the settlement's
+    // actual military strength and fortifications (see `resolveEventCombat` in
+    // engine.js) rather than a fixed effect, so a militia and guardhouses built up
+    // over the game genuinely change these outcomes instead of sitting idle.
+    // -------------------------------------------------------------
+    {
+      id: "raiders_on_road",
+      title: "Raiders on the Road",
+      text: "Scouts report a band of raiders moving along the road toward the settlement's outer fields.",
+      options: [
+        { text: "Muster the militia to intercept", combatCheck: {
+            attackerStrength: 25, strengthMult: 2.2, defenseMult: 0.3,
+            winEffect: { reputation: 5, coin: 12 }, winChronicle: "Militia intercepted raiders on the road and drove them off.",
+            loseEffect: { stability: -4, food: -10 }, loseChronicle: "Militia sent to intercept raiders were beaten back." } },
+        { text: "Hold the walls and let them pass", combatCheck: {
+            attackerStrength: 20, strengthMult: 0.4, defenseMult: 2,
+            winEffect: { stability: 2 }, winChronicle: "The settlement held behind its walls as raiders passed without incident.",
+            loseEffect: { coin: -15, food: -8 }, loseChronicle: "Raiders tested the walls and made off with what they could reach." } },
+        { text: "Pay them to move along", effect: { coin: -20 }, chronicle: "Raiders on the road were paid to move along without incident." }
+      ]
+    },
+    {
+      id: "monster_pack_sighted",
+      title: "A Pack Sighted Near the Fields",
+      text: "Farmers report a pack of nekkers denning close to the outer fields, growing bolder by the week.",
+      options: [
+        { text: "Send soldiers to clear the den", combatCheck: {
+            attackerStrength: 22, strengthMult: 2, defenseMult: 0.2, loseCasualtyChance: 0.4,
+            winEffect: { food: 10, reputation: 3 }, winChronicle: "Soldiers cleared the nekker den near the fields.",
+            loseEffect: { food: -15, stability: -3 }, loseChronicle: "An attempt to clear the nekker den was driven back with losses." } },
+        { text: "Fortify the field edge and wait them out", combatCheck: {
+            attackerStrength: 18, strengthMult: 0.3, defenseMult: 1.8,
+            winEffect: { stability: 1 }, winChronicle: "The fields were fortified, and the nekker pack moved on of its own accord.",
+            loseEffect: { food: -12 }, loseChronicle: "The nekker pack pressed in despite the field fortifications." } },
+        { text: "Avoid the fields for now", effect: { food: -10 }, chronicle: "The outer fields were avoided while the nekker pack denned nearby." }
+      ]
+    },
+    {
+      id: "rival_warband",
+      title: "A Rival Warband Approaches",
+      text: "A sizeable armed band, banners unfamiliar, is spotted making directly for the settlement.",
+      options: [
+        { text: "Meet them in open battle", combatCheck: {
+            attackerStrength: 55, strengthMult: 2.5, defenseMult: 0.2, winCasualtyChance: 0.15, loseCasualtyChance: 0.5,
+            winEffect: { reputation: 12, influence: 4 }, winChronicle: "The settlement's militia met a rival warband in open battle and won decisively.",
+            loseEffect: { stability: -10, coin: -30 }, loseChronicle: "The settlement's militia was routed in open battle against a rival warband.",
+            loseFollowUp: { eventId: "warband_returns", delayTurns: 10 } } },
+        { text: "Retreat behind the walls", combatCheck: {
+            attackerStrength: 45, strengthMult: 0.4, defenseMult: 2.2, loseCasualtyChance: 0.3,
+            winEffect: { stability: 3 }, winChronicle: "The settlement held behind its walls against a rival warband until it withdrew.",
+            loseEffect: { stability: -8, food: -25 }, loseChronicle: "The walls were breached by a rival warband before it withdrew.",
+            loseFollowUp: { eventId: "warband_returns", delayTurns: 10 } } },
+        { text: "Attempt to parley", effect: { coin: -25, influence: -3 }, chronicle: "A costly parley turned the rival warband aside without battle." }
+      ]
+    },
+    {
+      id: "warband_returns", chainOnly: true,
+      title: "The Warband Returns",
+      text: "Word comes that the warband turned back before has regrouped, emboldened, and is marching on the settlement again.",
+      options: [
+        { text: "Make a stand", combatCheck: {
+            attackerStrength: 60, strengthMult: 2.3, defenseMult: 0.6, winCasualtyChance: 0.1, loseCasualtyChance: 0.5,
+            winEffect: { reputation: 15, stability: 4 }, winChronicle: "The returning warband was met and finally broken for good.",
+            loseEffect: { stability: -14, food: -30, coin: -20 }, loseChronicle: "The returning warband overran what defense could be mustered." } },
+        { text: "Buy them off, whatever the cost", effect: { coin: -60, influence: -6 }, chronicle: "A heavy price was paid to turn the returning warband aside for good." }
+      ]
+    },
+    {
+      id: "durens_watch_aid",
+      title: "Duren's Watch Calls for Aid",
+      text: "Captain Duren sends word: bandits are massing near the garrison, and Duren's Watch asks for soldiers to help hold the line.",
+      options: [
+        { text: "Answer the call to arms", combatCheck: {
+            attackerStrength: 35, strengthMult: 2, defenseMult: 0.4, loseCasualtyChance: 0.4,
+            winEffect: { reputation: 5 }, winChronicle: "Soldiers answered Duren's Watch's call and helped break the bandit muster.",
+            loseEffect: { stability: -5 }, loseChronicle: "Soldiers sent to aid Duren's Watch suffered losses before the bandits were driven off." } },
+        { text: "Decline, the soldiers cannot be spared", effect: { faction: "garrison", relationship: -8 }, chronicle: "Duren's Watch's call for aid was declined." }
+      ]
+    },
+    {
+      id: "night_alarm",
+      title: "Night Alarm",
+      text: "A watchman's horn sounds in the small hours — movement at the tree line, though nothing is yet certain.",
+      options: [
+        { text: "Rally swiftly to the walls", combatCheck: {
+            attackerStrength: 15, strengthMult: 1.5, defenseMult: 1, loseCasualtyChance: 0.15,
+            winEffect: { stability: 2 }, winChronicle: "A swift rally to the walls met the night's alarm without serious incident.",
+            loseEffect: { stability: -3, coin: -8 }, loseChronicle: "The night alarm caught the settlement's defenders too slow to organise." } },
+        { text: "Return to sleep — likely nothing", effect: { stability: -2 }, chronicle: "The night alarm went unanswered. Some slept uneasily after." }
+      ]
+    },
+    {
+      id: "defend_the_harvest",
+      title: "Defend the Harvest",
+      text: "The harvest sits ready in the fields, and word reaches the settlement that raiders have taken notice.",
+      options: [
+        { text: "Guard the harvest with soldiers", combatCheck: {
+            attackerStrength: 28, strengthMult: 2, defenseMult: 0.3,
+            winEffect: { food: 20 }, winChronicle: "The harvest was guarded successfully against raiders and brought in whole.",
+            loseEffect: { food: -25 }, loseChronicle: "Raiders broke through the harvest guard and made off with much of it." } },
+        { text: "Bring the harvest in quickly, unguarded", effect: { food: -8 }, chronicle: "The harvest was rushed in without guard, at some cost to the yield." }
+      ]
+    },
+    {
+      id: "show_of_force",
+      title: "A Show of Force",
+      text: "The militia captain suggests a deliberate patrol in force near the roads the Grey Company favours — a show of strength rather than a response to any specific threat.",
+      options: [
+        { text: "Send the militia on patrol", combatCheck: {
+            attackerStrength: 20, strengthMult: 1.8, defenseMult: 0.2, loseCasualtyChance: 0.1,
+            winEffect: { reputation: 4, stability: 2 }, winChronicle: "A deliberate show of force along the roads bolstered the settlement's standing.",
+            loseEffect: { stability: -3, faction: "bandits", relationship: -5 }, loseChronicle: "A show of force met more resistance than expected and achieved little." } },
+        { text: "Keep the militia close to home", effect: {}, chronicle: "The militia captain's proposal for a show of force was set aside for now." }
       ]
     }
   ];
