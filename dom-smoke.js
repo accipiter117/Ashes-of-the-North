@@ -74,6 +74,12 @@ try {
   assert(!doc.getElementById("startScreen"), "start screen removed after new game");
   assert(doc.getElementById("settlementTitle").textContent === "Ashholm", "settlement title set");
 
+  // Seasonal map palette: #app should carry a data-season attribute matching the
+  // in-game season, which CSS uses to reskin terrain tiles.
+  const seasonAttr = doc.getElementById("app").dataset.season;
+  assert(["spring", "summer", "autumn", "winter"].includes(seasonAttr), "app should have a valid data-season attribute — got \"" + seasonAttr + "\"");
+  assert(seasonAttr === "spring", "a freshly founded settlement starts in Spring — got \"" + seasonAttr + "\"");
+
   // Resource bar populated
   assert(doc.getElementById("resourceBar").children.length > 5, "resource bar has chips");
 
@@ -176,6 +182,9 @@ try {
     click(doc.getElementById("turnBtn"));
   }
   assert(window.UI.getState().meta.turn >= 25, "turns advanced via UI (" + window.UI.getState().meta.turn + ")");
+  const seasonAfterTurns = doc.getElementById("app").dataset.season;
+  const expectedSeason = window.GameEngine.getSeason(window.UI.getState().meta.month).toLowerCase();
+  assert(seasonAfterTurns === expectedSeason, "data-season should track the calendar as turns pass — got \"" + seasonAfterTurns + "\", expected \"" + expectedSeason + "\"");
   assert(window.UI.getState().resources.stability >= 0 && window.UI.getState().resources.stability <= 100, "stability stayed in range through UI-driven turns");
 
   // Diplomacy action
@@ -214,6 +223,21 @@ try {
   click(doc.querySelector('.nav-btn[data-view="menu"]'));
   assert(doc.getElementById("saveBtn") !== null, "menu save button present");
   click(doc.getElementById("saveBtn"));
+
+  // Defense scenario odds preview: force a known combatCheck event and confirm the
+  // event modal shows a "⚔ X% odds" tag on the combat option — this is the whole
+  // point of the odds-preview feature, so verify it end-to-end through the real modal.
+  const combatEventDef = window.GameData.LOCAL_EVENTS.find(e => e.id === "raiders_on_road");
+  window.UI.getState().activeEvent = { id: combatEventDef.id, title: combatEventDef.title, text: combatEventDef.text, options: combatEventDef.options };
+  window.UI.openEventModal();
+  const optionButtons = Array.from(doc.querySelectorAll(".option-btn"));
+  const combatOptionBtn = optionButtons.find(b => b.textContent.includes("Muster the militia"));
+  assert(!!combatOptionBtn, "combat option button should be present in the event modal");
+  assert(/⚔ \d+% odds/.test(combatOptionBtn.textContent), "combat option should show an odds percentage — got \"" + combatOptionBtn.textContent + "\"");
+  const nonCombatOptionBtn = optionButtons.find(b => b.textContent.includes("Pay them to move along"));
+  assert(!!nonCombatOptionBtn && !nonCombatOptionBtn.textContent.includes("odds"), "a plain non-combat option should not show odds text");
+  click(combatOptionBtn);
+  assert(window.UI.getState().activeEvent === null, "clicking a combat option should resolve the event");
 
   console.log(failed ? "\nSMOKE TEST: FAILURES DETECTED" : "\nSMOKE TEST: ALL CHECKS PASSED");
   fs.writeFileSync(cssPath, originalCss);
