@@ -364,7 +364,11 @@ const GameEngine = (function () {
     }
     const { mult } = techMult(state, "militaryMult");
     const { mult: emult } = edictMult(state, "militaryMult");
-    return str * mult * emult;
+    // Formal allies (see performFactionAction's "alliance" result) lend real strength
+    // here — this single function already backs raids, defense event combatChecks,
+    // and exploration combat, so an alliance's benefit reaches all of them for free.
+    const allyBonus = (state.factions || []).filter(f => f.allied).length * 8;
+    return str * mult * emult + allyBonus;
   }
 
   // ---------------------------------------------------------------
@@ -778,6 +782,15 @@ const GameEngine = (function () {
     const f = faction(state, factionId);
     const action = D.FACTION_ACTIONS.find(a => a.id === actionId);
     if (!f || !action) return { ok: false, reason: "Unknown faction or action." };
+    if (action.requiresRelationship !== undefined && f.relationship < action.requiresRelationship) {
+      return { ok: false, reason: "This faction isn't friendly enough yet (needs " + action.requiresRelationship + "+ relationship)." };
+    }
+    if (action.requiresTrust !== undefined && f.trust < action.requiresTrust) {
+      return { ok: false, reason: "This faction doesn't trust the settlement enough yet (needs " + action.requiresTrust + "+ trust)." };
+    }
+    if (action.result === "alliance" && f.allied) {
+      return { ok: false, reason: "Already allied with " + f.name + "." };
+    }
     if (!canAfford(state, action.cost)) return { ok: false, reason: "Not enough resources." };
     pay(state, action.cost);
     // trust affects success chance
@@ -813,6 +826,11 @@ const GameEngine = (function () {
         break;
       case "recurringTrade":
         f.tradeAgreement = true;
+        break;
+      case "alliance":
+        f.allied = true;
+        state.resources.reputation = clamp(round2(state.resources.reputation + 8), 0, 100);
+        chronicle(state, "A formal alliance was struck with " + f.name + " — their strength stands with the settlement's now.");
         break;
       default: break;
     }
