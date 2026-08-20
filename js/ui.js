@@ -254,12 +254,20 @@ const UI = (function () {
     const str = E.militaryStrength(state).toFixed(1);
     const pop = E.population(state);
     const overcrowded = pop > cap.housing;
+    const upkeep = E.totalUpkeep(state);
+    const upkeepShortfall = upkeep > state.resources.coin;
+    const softCap = E.resourceSoftCap(state);
     return '<div class="card"><h3>Settlement Overview</h3>' +
       '<div class="row"><span>Population</span><span>' + pop + ' / ' + cap.housing + ' housed' +
         (overcrowded ? ' <span class="tag bad">overcrowded</span>' : '') + '</span></div>' +
       (overcrowded ? '<div class="sub" style="color:var(--blood-bright);margin-top:-2px">Growth slows until more housing is built.</div>' : '') +
       '<div class="row"><span>Military Strength</span><span>' + str + '</span></div>' +
       '<div class="row"><span>Defense</span><span>' + cap.defense.toFixed(0) + '</span></div>' +
+      '<div class="row"><span>Upkeep</span><span>' + upkeep.toFixed(1) + ' coin/mo' +
+        (upkeepShortfall ? ' <span class="tag bad">short</span>' : '') + '</span></div>' +
+      (upkeepShortfall ? '<div class="sub" style="color:var(--blood-bright);margin-top:-2px">The treasury can\'t cover upkeep — stability is taking the cost.</div>' : '') +
+      '<div class="row"><span>Storage before spoilage</span><span>' + softCap + '</span></div>' +
+      '<div class="sub" style="margin-top:-2px">Coin, tools, weapons, knowledge, and influence above this waste away each month — a reason to spend, not just hoard.</div>' +
       '<div class="row"><span>Legacy Score</span><span>' + E.legacyScore(state) + '</span></div></div>';
   }
 
@@ -525,6 +533,7 @@ const UI = (function () {
       const allianceAction = D.FACTION_ACTIONS.find(a => a.id === "form_alliance");
       const regularActions = D.FACTION_ACTIONS.filter(a => a.id !== "form_alliance");
       const allianceEligible = f.relationship >= allianceAction.requiresRelationship && f.trust >= allianceAction.requiresTrust;
+      const allianceCost = E.factionActionCost(state, f.id, "form_alliance");
       html += '<div class="card">' +
         '<div class="faction-header"><h3>' + f.name + '</h3><span class="tag">' + f.type + '</span></div>' +
         '<div class="sub">' + f.desc + ' — led by ' + f.leader + '</div>' +
@@ -534,12 +543,15 @@ const UI = (function () {
           (f.allied ? ' · <span class="tag good">Allied</span>' : '') + '</div>' +
         (f.allied ? '' :
           '<button class="btn' + (allianceEligible ? ' primary' : '') + ' block small" style="margin-top:8px" data-faction="' + f.id + '" data-action="form_alliance"' + (allianceEligible ? '' : ' disabled') + '>' +
-            'Propose Formal Alliance (' + costString(allianceAction.cost) + ')' +
+            'Propose Formal Alliance (' + costString(allianceCost) + ')' +
             (allianceEligible ? '' : ' — needs ' + allianceAction.requiresRelationship + '+ relationship & ' + allianceAction.requiresTrust + '+ trust') +
           '</button>') +
         '<div class="grid2" style="margin-top:8px">' +
-        regularActions.map(a => '<button class="btn small" data-faction="' + f.id + '" data-action="' + a.id + '">' + a.name +
-          (Object.keys(a.cost).length ? ' (' + costString(a.cost) + ')' : '') + '</button>').join("") +
+        regularActions.map(a => {
+          const liveCost = E.factionActionCost(state, f.id, a.id);
+          return '<button class="btn small" data-faction="' + f.id + '" data-action="' + a.id + '">' + a.name +
+            (Object.keys(liveCost).length ? ' (' + costString(liveCost) + ')' : '') + '</button>';
+        }).join("") +
         '</div></div>';
     }
     el.innerHTML = html;
