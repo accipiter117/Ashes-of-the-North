@@ -42,8 +42,27 @@ const GameEngine = (function () {
   // CITIZEN GENERATION
   // ---------------------------------------------------------------
   let citizenCounter = 0;
-  function makeCitizen(age, important, lineage) {
-    citizenCounter++;
+  // `state` is optional and only used to persist the ID counter (see below) — every
+  // call site created before `state` exists (the initial founding citizens in
+  // newGame) omits it and falls back to the module-level counter, which newGame then
+  // copies onto the freshly-built state right after.
+  function makeCitizen(age, important, lineage, state) {
+    let nextId;
+    if (state) {
+      // BUG FIX: citizenCounter used to be a plain module-level variable, which resets
+      // to 0 on every page reload (a fresh JS module load) but was never saved or
+      // restored. Any citizen created after a reload would start renumbering from
+      // "c1" again, directly colliding with existing citizens (most obviously the
+      // founder) still in the loaded save — corrupting every ID-based lookup
+      // (assignJob, unassignJob, lineage partner/parent links) for whichever citizen
+      // `.find()` happened to resolve to. Persisting the counter on `state` itself
+      // means it round-trips through save/load naturally, like everything else.
+      state.citizenCounter = (state.citizenCounter || 0) + 1;
+      nextId = state.citizenCounter;
+    } else {
+      citizenCounter++;
+      nextId = citizenCounter;
+    }
     const sex = chance(0.5) ? "m" : "f";
     const first = sex === "m" ? pick(FIRST_NAMES_M) : pick(FIRST_NAMES_F);
     const last = pick(SURNAMES);
@@ -68,7 +87,7 @@ const GameEngine = (function () {
       }
     }
     return {
-      id: "c" + citizenCounter,
+      id: "c" + nextId,
       name: first + " " + last,
       age: (age !== undefined && age !== null) ? age : (16 + Math.floor(rand() * 30)),
       sex, type: null, job: null,
@@ -178,7 +197,8 @@ const GameEngine = (function () {
       scheduledEvents: [], // Phase 2: chained/delayed events queue
       eventCooldowns: {}, // eventId -> last turn fired, reduces repetition over a long game
       flags: { tutorialSeen: false },
-      stats: { deaths: 0, births: 0, battlesWon: 0, battlesLost: 0, eventsResolved: 0 }
+      stats: { deaths: 0, births: 0, battlesWon: 0, battlesLost: 0, eventsResolved: 0 },
+      citizenCounter: citizenCounter // carry the bootstrap counter forward so it round-trips through save/load
     };
     logMsg(state, "The settlement of " + state.settlementName + " is founded among the ruins of the old keep.");
     return state;
@@ -698,7 +718,7 @@ const GameEngine = (function () {
       if (c.id > partner.id) continue; // process each couple once, not twice
       if (state.citizens.length >= MAX_NAMED_CITIZENS) continue;
       if (!chance(0.025)) continue;
-      const child = makeCitizen(0, true, { parentIds: [c.id, partner.id], inheritTraitsFrom: [c, partner] });
+      const child = makeCitizen(0, true, { parentIds: [c.id, partner.id], inheritTraitsFrom: [c, partner] }, state);
       child.arrivedTurn = state.meta.turn;
       child.history.push("Born to " + c.name + " and " + partner.name + ".");
       state.citizens.push(child);
@@ -730,7 +750,7 @@ const GameEngine = (function () {
     let births = wholeBirths + (chance(fractional) ? 1 : 0);
     for (let i = 0; i < births; i++) {
       if (state.citizens.length >= MAX_NAMED_CITIZENS) break;
-      const c = makeCitizen(0, false);
+      const c = makeCitizen(0, false, null, state);
       c.arrivedTurn = state.meta.turn;
       state.citizens.push(c);
       state.stats.births++;
@@ -748,7 +768,7 @@ const GameEngine = (function () {
       const migrants = 1 + Math.floor(rand() * 3);
       for (let i = 0; i < migrants; i++) {
         if (state.citizens.length >= MAX_NAMED_CITIZENS) break;
-        const c = makeCitizen(16 + Math.floor(rand() * 30), false);
+        const c = makeCitizen(16 + Math.floor(rand() * 30), false, null, state);
         c.arrivedTurn = state.meta.turn;
         state.citizens.push(c);
       }
@@ -821,7 +841,7 @@ const GameEngine = (function () {
         logMsg(state, f.name + " agreed to train the settlement's soldiers.");
         break;
       case "specialist":
-        state.citizens.push(Object.assign(makeCitizen(28 + Math.floor(rand()*15), true), { arrivedTurn: state.meta.turn }));
+        state.citizens.push(Object.assign(makeCitizen(28 + Math.floor(rand()*15), true, null, state), { arrivedTurn: state.meta.turn }));
         logMsg(state, f.name + " sent a specialist to join the settlement.");
         break;
       case "recurringTrade":
@@ -1096,7 +1116,7 @@ const GameEngine = (function () {
         if (delta > 0) {
           for (let i = 0; i < delta; i++) {
             if (state.citizens.length >= MAX_NAMED_CITIZENS) break;
-            state.citizens.push(Object.assign(makeCitizen(8 + Math.floor(rand()*40), false), { arrivedTurn: state.meta.turn }));
+            state.citizens.push(Object.assign(makeCitizen(8 + Math.floor(rand()*40), false, null, state), { arrivedTurn: state.meta.turn }));
           }
         } else if (delta < 0) {
           for (let i = 0; i < -delta; i++) killRandomCitizen(state, "departure");
@@ -1281,6 +1301,27 @@ const GameEngine = (function () {
       if (!state.edicts) state.edicts = {};
       if (!state.scheduledEvents) state.scheduledEvents = [];
       if (!state.eventCooldowns) state.eventCooldowns = {};
+      // BUG FIX (citizen ID collisions — see makeCitizen): old saves predate the
+      // persisted citizenCounter entirely. Derive a safe resume point from the
+      // highest existing numeric ID so every citizen created from now on is
+      // guaranteed unique, even though any duplicates already present from before
+      // this fix can't be safely re-numbered without breaking partner/parent/child
+      // references that point at them.
+      if (state.citizenCounter === undefined || state.citizenCounter === null) {
+        let maxId = 0;
+        const seenIds = new Set();
+        let duplicatesFound = 0;
+        for (const c of (state.citizens || [])) {
+          const m = /^c(\d+)$/.exec(c.id);
+          if (m) maxId = Math.max(maxId, parseInt(m[1], 10));
+          if (seenIds.has(c.id)) duplicatesFound++;
+          seenIds.add(c.id);
+        }
+        state.citizenCounter = maxId;
+        if (duplicatesFound > 0) {
+          logMsg(state, "Some settlement records from an older version had conflicting identifiers — corrected for everyone created from now on.");
+        }
+      }
       if (state.factions && state.factions.some(f => !f.relations)) initFactionRelations(state.factions);
       migrateGridToNewSize(state);
       return { ok: true, state };
