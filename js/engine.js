@@ -638,6 +638,66 @@ const GameEngine = (function () {
     return consumption;
   }
 
+  // ---------------------------------------------------------------
+  // ECONOMY REBALANCE: upkeep, diplomacy diminishing returns, resource decay
+  // ---------------------------------------------------------------
+  // Every built (non-ruin) building costs coin to maintain, scaled by tier — more and
+  // better buildings means a bigger settlement, but also a bigger standing cost, so
+  // growth stops being purely additive. Falling short doesn't damage buildings (too
+  // punishing for one bad month) but does cost stability — the treasury can't pay
+  // its people, and they notice.
+  function totalUpkeep(state) {
+    let total = 0;
+    for (const t of state.grid) {
+      if (!t.building) continue;
+      const b = D.BUILDINGS[t.building];
+      if (b && b.upkeep && b.upkeep.coin) total += b.upkeep.coin;
+    }
+    return round2(total);
+  }
+  function runUpkeep(state) {
+    const upkeep = totalUpkeep(state);
+    if (upkeep <= 0) return;
+    if (state.resources.coin >= upkeep) {
+      state.resources.coin = round2(state.resources.coin - upkeep);
+    } else {
+      const shortfall = round2(upkeep - state.resources.coin);
+      state.resources.coin = 0;
+      const penalty = clamp(round2(shortfall * 0.15), 0, 8);
+      state.resources.stability = clamp(round2(state.resources.stability - penalty), 0, 100);
+      logMsg(state, "The treasury could not cover " + shortfall + " coin in upkeep this month — unrest grows.");
+    }
+  }
+
+  // Stockpiled coin, tools, weapons, knowledge, and influence above a stage-scaled
+  // soft cap spoil, waste, or lose relevance rather than sitting idle forever —
+  // without this, a settlement's economy only ever grows and resources never present
+  // any reason to spend rather than hoard. Only the excess above the cap decays (a
+  // fixed percentage of it per turn), so this never claws back what's already below
+  // the threshold and never punishes early or mid-game accumulation.
+  const RESOURCE_DECAY_RESOURCES = ["coin", "tools", "weapons", "knowledge", "influence"];
+  const STAGE_SOFT_CAPS = { camp: 150, hamlet: 400, village: 900, town: 1800, city: 3500 };
+  function resourceSoftCap(state) {
+    return STAGE_SOFT_CAPS[state.meta.stage] || 3500;
+  }
+  function runResourceDecay(state) {
+    const cap = resourceSoftCap(state);
+    let anyDecayed = false;
+    for (const r of RESOURCE_DECAY_RESOURCES) {
+      const val = state.resources[r] || 0;
+      if (val <= cap) continue;
+      const excess = val - cap;
+      const lost = round2(excess * 0.08);
+      if (lost > 0) {
+        state.resources[r] = round2(val - lost);
+        anyDecayed = true;
+      }
+    }
+    if (anyDecayed && chance(0.25)) {
+      logMsg(state, "Surplus goods beyond what the settlement can put to use are wasting away in storage.");
+    }
+  }
+
   function killRandomCitizen(state, cause) {
     const alive = livingCitizens(state);
     if (alive.length === 0) return;
@@ -798,6 +858,20 @@ const GameEngine = (function () {
   // ---------------------------------------------------------------
   function faction(state, id) { return state.factions.find(f => f.id === id); }
 
+  // Currying favor with an already-friendly faction costs progressively more — this is
+  // what stops relationship from being something you can just cheaply buy to any level
+  // and hold forever; keeping a faction at high relationship gets genuinely expensive,
+  // not just slow. At relationship 0 this is a 1x multiplier; by 100 it's roughly 2.67x.
+  function factionActionCost(state, factionId, actionId) {
+    const f = faction(state, factionId);
+    const action = D.FACTION_ACTIONS.find(a => a.id === actionId);
+    if (!f || !action) return {};
+    const costMult = 1 + Math.max(0, f.relationship) / 60;
+    const scaled = {};
+    for (const r in action.cost) scaled[r] = round2(action.cost[r] * costMult);
+    return scaled;
+  }
+
   function performFactionAction(state, factionId, actionId) {
     const f = faction(state, factionId);
     const action = D.FACTION_ACTIONS.find(a => a.id === actionId);
@@ -811,8 +885,9 @@ const GameEngine = (function () {
     if (action.result === "alliance" && f.allied) {
       return { ok: false, reason: "Already allied with " + f.name + "." };
     }
-    if (!canAfford(state, action.cost)) return { ok: false, reason: "Not enough resources." };
-    pay(state, action.cost);
+    const scaledCost = factionActionCost(state, factionId, actionId);
+    if (!canAfford(state, scaledCost)) return { ok: false, reason: "Not enough resources." };
+    pay(state, scaledCost);
     // trust affects success chance
     const successChance = clamp(0.4 + f.trust / 100, 0.15, 0.95);
     const success = chance(successChance);
@@ -1259,11 +1334,13 @@ const GameEngine = (function () {
     progressConstruction(state);
     runProduction(state);
     runConsumption(state);
+    runUpkeep(state);
     runPopulation(state);
     runLineage(state);
     runFactionDrift(state);
     runInterFactionPolitics(state);
     recomputeStage(state);
+    runResourceDecay(state);
     maybeTriggerKingdomEvent(state);
     maybeTriggerLocalEvent(state);
 
@@ -1350,7 +1427,7 @@ const GameEngine = (function () {
     militaryStrength, legacyScore,
     saveGame, loadGame, hasSave, deleteSave,
     tileAt, isRuinTile, builtTiles, adjacencyBonusForTile, previewAdjacency,
-    toggleEdict, getFactionRelation, previewCombatChance
+    toggleEdict, getFactionRelation, previewCombatChance, totalUpkeep, resourceSoftCap, factionActionCost
   };
 })();
 
