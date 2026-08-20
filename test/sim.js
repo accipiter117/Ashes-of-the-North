@@ -575,6 +575,50 @@ function checkFinite(state, label) {
   console.log("Regression check OK: alliance requires threshold relationship/trust, is one-time, and measurably strengthens the settlement's military");
 })();
 
+// --- Regression test: citizen IDs must never collide across a simulated page reload ---
+// (a real browser reload re-executes every JS module fresh, resetting any plain
+// module-level variable — this is exactly what caused the original bug, where a
+// module-level `citizenCounter` reset to 0 on reload while the loaded save's citizens
+// kept their old IDs, so the next citizen created after any reload collided with an
+// existing one, corrupting every ID-based lookup for whichever citizen it collided with.)
+(function testCitizenIdSurvivesReload() {
+  global.localStorage = (function () {
+    let store = {};
+    return { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = v; }, removeItem: k => { delete store[k]; } };
+  })();
+
+  const enginePath = require.resolve("../js/engine.js");
+  const Engine1 = require(enginePath);
+  const s1 = Engine1.newGame("ReloadIdTest");
+  const idsBefore = s1.citizens.map(c => c.id);
+  Engine1.saveGame(s1);
+
+  // Simulate a real page reload: delete the module from Node's cache and re-require
+  // it, forcing every module-level variable (including the old citizenCounter) back
+  // to its initial value — exactly what happens when a browser reloads the page.
+  delete require.cache[enginePath];
+  const Engine2 = require(enginePath);
+  const loaded = Engine2.loadGame();
+  assert(loaded.ok, "loading the save after a simulated reload should succeed");
+  assert(loaded.state.citizenCounter === idsBefore.length,
+    "the citizen ID counter should be restored from the save, not reset — got " + loaded.state.citizenCounter + ", expected " + idsBefore.length);
+
+  loaded.state.resources.coin = 2000; loaded.state.resources.influence = 2000;
+  loaded.state.factions.forEach(f => { f.relationship = 100; f.trust = 100; });
+  let result;
+  for (let i = 0; i < 15 && !(result && result.success); i++) {
+    result = Engine2.performFactionAction(loaded.state, "heddon", "invite_specialist");
+  }
+  assert(result && result.success, "should be able to invite a specialist (creating a new citizen) after the simulated reload");
+  const idsAfter = loaded.state.citizens.map(c => c.id);
+  assert(new Set(idsAfter).size === idsAfter.length,
+    "citizen IDs must all be unique after creating a new citizen post-reload — found a collision among: " + idsAfter.join(","));
+  assert(!idsBefore.includes(idsAfter[idsAfter.length - 1]),
+    "the newly created citizen's ID must not collide with any pre-existing citizen from before the reload");
+
+  console.log("Regression check OK: citizen IDs stay unique across a simulated page reload (no collision after reload + new citizen creation)");
+})();
+
 let failures = 0;
 for (let trial = 0; trial < 5; trial++) {
   console.log("--- Trial " + trial + " ---");
