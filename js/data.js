@@ -86,48 +86,48 @@ const GameData = (function () {
   // ---------------------------------------------------------------
   const BUILDINGS = {
     house:       { name: "House",            chain: ["house","house2","house3"],       tier: 0, cost: { wood: 12, stone: 4 },  upkeep: {}, effect: { housing: 4 }, buildTime: 1 },
-    house2:      { name: "Improved House",    chain: ["house","house2","house3"],       tier: 1, cost: { wood: 18, stone: 10 }, upkeep: {}, effect: { housing: 7, stability: 0.05 }, buildTime: 2, upgradeOf: "house" },
-    house3:      { name: "Stone House",       chain: ["house","house2","house3"],       tier: 2, cost: { wood: 10, stone: 26, iron: 4 }, upkeep: {}, effect: { housing: 10, stability: 0.1 }, buildTime: 3, upgradeOf: "house2" },
+    house2:      { name: "Improved House",    chain: ["house","house2","house3"],       tier: 1, cost: { wood: 18, stone: 10 }, upkeep: { coin: 0.3 }, effect: { housing: 7, stability: 0.05 }, buildTime: 2, upgradeOf: "house" },
+    house3:      { name: "Stone House",       chain: ["house","house2","house3"],       tier: 2, cost: { wood: 10, stone: 26, iron: 4 }, upkeep: { coin: 0.6 }, effect: { housing: 10, stability: 0.1 }, buildTime: 3, upgradeOf: "house2" },
 
     farm:        { name: "Farm",              chain: ["farm","farm2","farm3"],          tier: 0, cost: { wood: 10 },            upkeep: {}, effect: { jobSlots: { farmer: 3 } }, buildTime: 1 },
-    farm2:       { name: "Improved Farm",      chain: ["farm","farm2","farm3"],          tier: 1, cost: { wood: 16, tools: 4 }, upkeep: {}, effect: { jobSlots: { farmer: 4 }, yieldMult: 1.25 }, buildTime: 2, upgradeOf: "farm" },
-    farm3:       { name: "Large Farm",         chain: ["farm","farm2","farm3"],          tier: 2, cost: { wood: 20, tools: 8, stone: 6 }, upkeep: {}, effect: { jobSlots: { farmer: 5 }, yieldMult: 1.5 }, buildTime: 3, upgradeOf: "farm2" },
+    farm2:       { name: "Improved Farm",      chain: ["farm","farm2","farm3"],          tier: 1, cost: { wood: 16, tools: 4 }, upkeep: { coin: 0.3 }, effect: { jobSlots: { farmer: 4 }, yieldMult: 1.25 }, buildTime: 2, upgradeOf: "farm" },
+    farm3:       { name: "Large Farm",         chain: ["farm","farm2","farm3"],          tier: 2, cost: { wood: 20, tools: 8, stone: 6 }, upkeep: { coin: 0.6 }, effect: { jobSlots: { farmer: 5 }, yieldMult: 1.5 }, buildTime: 3, upgradeOf: "farm2" },
 
     dock:        { name: "Fishing Dock",      chain: ["dock"],                          tier: 0, cost: { wood: 14 },            upkeep: {}, effect: { jobSlots: { fisherman: 3 } }, buildTime: 1, requiresTile: "river" },
 
-    workshop:    { name: "Workshop",          chain: ["workshop","workshop2"],          tier: 0, cost: { wood: 16, stone: 6 }, upkeep: {}, effect: { jobSlots: { blacksmith: 1, carpenter: 1, tanner: 1, brewer: 1 } }, buildTime: 2 },
-    workshop2:   { name: "Advanced Workshop", chain: ["workshop","workshop2"],          tier: 1, cost: { wood: 20, stone: 14, iron: 8 }, upkeep: {}, effect: { jobSlots: { blacksmith: 2, carpenter: 2, tanner: 2, brewer: 2 }, yieldMult: 1.3 }, buildTime: 3, upgradeOf: "workshop" },
+    workshop:    { name: "Workshop",          chain: ["workshop","workshop2"],          tier: 0, cost: { wood: 16, stone: 6 }, upkeep: { coin: 0.4 }, effect: { jobSlots: { blacksmith: 1, carpenter: 1, tanner: 1, brewer: 1 } }, buildTime: 2 },
+    workshop2:   { name: "Advanced Workshop", chain: ["workshop","workshop2"],          tier: 1, cost: { wood: 20, stone: 14, iron: 8 }, upkeep: { coin: 0.9 }, effect: { jobSlots: { blacksmith: 2, carpenter: 2, tanner: 2, brewer: 2 }, yieldMult: 1.3 }, buildTime: 3, upgradeOf: "workshop" },
 
     mine:        { name: "Mine",              chain: ["mine"],                          tier: 0, cost: { wood: 18, tools: 4 }, upkeep: {}, effect: { jobSlots: { miner: 3 } }, buildTime: 2, requiresTile: "hills" },
 
-    market:      { name: "Market",            chain: ["market","market2","market3"],    tier: 0, cost: { wood: 14, coin: 10 }, upkeep: {}, effect: { jobSlots: { trader: 2, innkeeper: 1 } }, buildTime: 2 },
-    market2:     { name: "Trading Post",      chain: ["market","market2","market3"],    tier: 1, cost: { wood: 20, stone: 8, coin: 30 }, upkeep: {}, effect: { jobSlots: { trader: 3, innkeeper: 2, caravan_master: 1 }, tradeBonus: 0.15 }, buildTime: 3, upgradeOf: "market" },
-    market3:     { name: "Market Hall",       chain: ["market","market2","market3"],    tier: 2, cost: { wood: 24, stone: 20, coin: 60 }, upkeep: {}, effect: { jobSlots: { trader: 4, innkeeper: 2, caravan_master: 2 }, tradeBonus: 0.3 }, buildTime: 4, upgradeOf: "market2" },
+    market:      { name: "Market",            chain: ["market","market2","market3"],    tier: 0, cost: { wood: 14, coin: 10 }, upkeep: { coin: 0.5 }, effect: { jobSlots: { trader: 2, innkeeper: 1 } }, buildTime: 2 },
+    market2:     { name: "Trading Post",      chain: ["market","market2","market3"],    tier: 1, cost: { wood: 20, stone: 8, coin: 30 }, upkeep: { coin: 1.2 }, effect: { jobSlots: { trader: 3, innkeeper: 2, caravan_master: 1 }, tradeBonus: 0.15 }, buildTime: 3, upgradeOf: "market" },
+    market3:     { name: "Market Hall",       chain: ["market","market2","market3"],    tier: 2, cost: { wood: 24, stone: 20, coin: 60 }, upkeep: { coin: 2.2 }, effect: { jobSlots: { trader: 4, innkeeper: 2, caravan_master: 2 }, tradeBonus: 0.3 }, buildTime: 4, upgradeOf: "market2" },
 
-    guardhouse:  { name: "Guardhouse",        chain: ["guardhouse","barracks","trainingyard"], tier: 0, cost: { wood: 12, iron: 4 }, upkeep: {}, effect: { jobSlots: { militia: 3 }, defense: 4 }, buildTime: 2 },
-    barracks:    { name: "Barracks",          chain: ["guardhouse","barracks","trainingyard"], tier: 1, cost: { wood: 20, stone: 12, iron: 10 }, upkeep: {}, effect: { jobSlots: { militia: 4, guard: 2, archer: 2 }, defense: 9 }, buildTime: 3, upgradeOf: "guardhouse" },
-    trainingyard:{ name: "Training Yard",     chain: ["guardhouse","barracks","trainingyard"], tier: 2, cost: { wood: 22, stone: 20, iron: 18, coin: 40 }, upkeep: {}, effect: { jobSlots: { militia: 5, guard: 3, archer: 3 }, defense: 15, trainingBonus: 0.25 }, buildTime: 4, upgradeOf: "barracks" },
+    guardhouse:  { name: "Guardhouse",        chain: ["guardhouse","barracks","trainingyard"], tier: 0, cost: { wood: 12, iron: 4 }, upkeep: { coin: 0.5 }, effect: { jobSlots: { militia: 3 }, defense: 4 }, buildTime: 2 },
+    barracks:    { name: "Barracks",          chain: ["guardhouse","barracks","trainingyard"], tier: 1, cost: { wood: 20, stone: 12, iron: 10 }, upkeep: { coin: 1.3 }, effect: { jobSlots: { militia: 4, guard: 2, archer: 2 }, defense: 9 }, buildTime: 3, upgradeOf: "guardhouse" },
+    trainingyard:{ name: "Training Yard",     chain: ["guardhouse","barracks","trainingyard"], tier: 2, cost: { wood: 22, stone: 20, iron: 18, coin: 40 }, upkeep: { coin: 2.5 }, effect: { jobSlots: { militia: 5, guard: 3, archer: 3 }, defense: 15, trainingBonus: 0.25 }, buildTime: 4, upgradeOf: "barracks" },
 
     keep:        { name: "Ruined Keep",       chain: ["keep","watchtower","fortkeep","manor"], tier: 0, cost: {},                upkeep: {}, effect: {}, buildTime: 0, ruin: true },
-    watchtower:  { name: "Watchtower",        chain: ["keep","watchtower","fortkeep","manor"], tier: 1, cost: { wood: 20, stone: 24 }, upkeep: {}, effect: { defense: 10, influence: 0.1 }, buildTime: 4, upgradeOf: "keep" },
-    fortkeep:    { name: "Fortified Keep",    chain: ["keep","watchtower","fortkeep","manor"], tier: 2, cost: { wood: 20, stone: 50, iron: 20 }, upkeep: {}, effect: { defense: 22, influence: 0.25 }, buildTime: 6, upgradeOf: "watchtower" },
-    manor:       { name: "Town Hall & Manor", chain: ["keep","watchtower","fortkeep","manor"], tier: 3, cost: { wood: 30, stone: 70, iron: 20, coin: 80 }, upkeep: {}, effect: { defense: 30, influence: 0.6, stability: 0.3 }, buildTime: 8, upgradeOf: "fortkeep" },
+    watchtower:  { name: "Watchtower",        chain: ["keep","watchtower","fortkeep","manor"], tier: 1, cost: { wood: 20, stone: 24 }, upkeep: { coin: 0.8 }, effect: { defense: 10, influence: 0.1 }, buildTime: 4, upgradeOf: "keep" },
+    fortkeep:    { name: "Fortified Keep",    chain: ["keep","watchtower","fortkeep","manor"], tier: 2, cost: { wood: 20, stone: 50, iron: 20 }, upkeep: { coin: 1.8 }, effect: { defense: 22, influence: 0.25 }, buildTime: 6, upgradeOf: "watchtower" },
+    manor:       { name: "Town Hall & Manor", chain: ["keep","watchtower","fortkeep","manor"], tier: 3, cost: { wood: 30, stone: 70, iron: 20, coin: 80 }, upkeep: { coin: 3.5 }, effect: { defense: 30, influence: 0.6, stability: 0.3 }, buildTime: 8, upgradeOf: "fortkeep" },
 
-    hall:        { name: "Town Hall",         chain: ["hall"],                          tier: 0, cost: { wood: 20, stone: 14, coin: 20 }, upkeep: {}, effect: { jobSlots: { administrator: 2, scribe: 1, tax_collector: 2 } }, buildTime: 3 },
+    hall:        { name: "Town Hall",         chain: ["hall"],                          tier: 0, cost: { wood: 20, stone: 14, coin: 20 }, upkeep: { coin: 0.6 }, effect: { jobSlots: { administrator: 2, scribe: 1, tax_collector: 2 } }, buildTime: 3 },
 
-    school:      { name: "School",            chain: ["school","library","academy"],    tier: 0, cost: { wood: 18, stone: 6, coin: 15 }, upkeep: {}, effect: { jobSlots: { teacher: 2, physician: 1, alchemist: 1 } }, buildTime: 3 },
-    library:     { name: "Library",           chain: ["school","library","academy"],    tier: 1, cost: { wood: 20, stone: 16, coin: 40 }, upkeep: {}, effect: { jobSlots: { teacher: 3, physician: 2, alchemist: 2 }, knowledgeMult: 1.3 }, buildTime: 4, upgradeOf: "school" },
-    academy:     { name: "Academy",           chain: ["school","library","academy"],    tier: 2, cost: { wood: 24, stone: 24, coin: 90 }, upkeep: {}, effect: { jobSlots: { teacher: 4, physician: 3, alchemist: 3 }, knowledgeMult: 1.6 }, buildTime: 6, upgradeOf: "library" },
+    school:      { name: "School",            chain: ["school","library","academy"],    tier: 0, cost: { wood: 18, stone: 6, coin: 15 }, upkeep: { coin: 0.5 }, effect: { jobSlots: { teacher: 2, physician: 1, alchemist: 1 } }, buildTime: 3 },
+    library:     { name: "Library",           chain: ["school","library","academy"],    tier: 1, cost: { wood: 20, stone: 16, coin: 40 }, upkeep: { coin: 1.1 }, effect: { jobSlots: { teacher: 3, physician: 2, alchemist: 2 }, knowledgeMult: 1.3 }, buildTime: 4, upgradeOf: "school" },
+    academy:     { name: "Academy",           chain: ["school","library","academy"],    tier: 2, cost: { wood: 24, stone: 24, coin: 90 }, upkeep: { coin: 2.0 }, effect: { jobSlots: { teacher: 4, physician: 3, alchemist: 3 }, knowledgeMult: 1.6 }, buildTime: 6, upgradeOf: "library" },
 
-    walls:       { name: "Palisade Walls",    chain: ["walls","stonewalls"],            tier: 0, cost: { wood: 30 },            upkeep: {}, effect: { defense: 8 }, buildTime: 3 },
-    stonewalls:  { name: "Stone Walls",       chain: ["walls","stonewalls"],            tier: 1, cost: { stone: 50, iron: 10 }, upkeep: {}, effect: { defense: 20 }, buildTime: 5, upgradeOf: "walls" },
+    walls:       { name: "Palisade Walls",    chain: ["walls","stonewalls"],            tier: 0, cost: { wood: 30 },            upkeep: { coin: 0.2 }, effect: { defense: 8 }, buildTime: 3 },
+    stonewalls:  { name: "Stone Walls",       chain: ["walls","stonewalls"],            tier: 1, cost: { stone: 50, iron: 10 }, upkeep: { coin: 0.5 }, effect: { defense: 20 }, buildTime: 5, upgradeOf: "walls" },
 
     shrine:      { name: "Ruined Chapel",     chain: ["shrine","chapel","sanctum"],     tier: 0, cost: {},                     upkeep: {}, effect: {}, buildTime: 0, ruin: true },
-    chapel:      { name: "Chapel",            chain: ["shrine","chapel","sanctum"],     tier: 1, cost: { wood: 16, stone: 10 }, upkeep: {}, effect: { stability: 0.3, influence: 0.15 }, buildTime: 3, upgradeOf: "shrine" },
-    sanctum:     { name: "Sanctum",           chain: ["shrine","chapel","sanctum"],     tier: 2, cost: { wood: 20, stone: 30, coin: 30 }, upkeep: {}, effect: { stability: 0.6, influence: 0.3 }, buildTime: 5, upgradeOf: "chapel" },
+    chapel:      { name: "Chapel",            chain: ["shrine","chapel","sanctum"],     tier: 1, cost: { wood: 16, stone: 10 }, upkeep: { coin: 0.3 }, effect: { stability: 0.3, influence: 0.15 }, buildTime: 3, upgradeOf: "shrine" },
+    sanctum:     { name: "Sanctum",           chain: ["shrine","chapel","sanctum"],     tier: 2, cost: { wood: 20, stone: 30, coin: 30 }, upkeep: { coin: 0.7 }, effect: { stability: 0.6, influence: 0.3 }, buildTime: 5, upgradeOf: "chapel" },
 
     storehouse:  { name: "Ruined Storehouse", chain: ["storehouse","granary"],          tier: 0, cost: {},                     upkeep: {}, effect: {}, buildTime: 0, ruin: true },
-    granary:     { name: "Granary",           chain: ["storehouse","granary"],          tier: 1, cost: { wood: 20, stone: 8 }, upkeep: {}, effect: { foodStorage: 200, spoilReduction: 0.5 }, buildTime: 3, upgradeOf: "storehouse" },
+    granary:     { name: "Granary",           chain: ["storehouse","granary"],          tier: 1, cost: { wood: 20, stone: 8 }, upkeep: { coin: 0.3 }, effect: { foodStorage: 200, spoilReduction: 0.5 }, buildTime: 3, upgradeOf: "storehouse" },
 
     well:        { name: "Well",              chain: ["well"],                          tier: 0, cost: { stone: 6 },           upkeep: {}, effect: { stability: 0.1 }, buildTime: 1 }
   };
