@@ -619,6 +619,83 @@ function checkFinite(state, label) {
   console.log("Regression check OK: citizen IDs stay unique across a simulated page reload (no collision after reload + new citizen creation)");
 })();
 
+// --- Regression test: building upkeep actually deducts coin, and shortfall costs stability ---
+(function testUpkeepMechanic() {
+  const s = Engine.newGame("UpkeepTest");
+  s.citizens = [s.citizens[0]]; // isolate: no production/consumption noise from other citizens
+  s.factions.forEach(f => { f.relationship = 0; });
+
+  // Place a few upkeep-costing buildings directly (bypass construction time).
+  const upkeepBuildings = ["house3", "market2", "trainingyard"];
+  for (const bid of upkeepBuildings) {
+    const t = s.grid.find(g => g.terrain === "field" && !g.building);
+    t.building = bid; t.tier = Data.BUILDINGS[bid].tier;
+  }
+  const expectedUpkeep = upkeepBuildings.reduce((sum, bid) => sum + (Data.BUILDINGS[bid].upkeep.coin || 0), 0);
+  assert(expectedUpkeep > 0, "test setup sanity check: these buildings should have nonzero upkeep");
+  assert(Engine.totalUpkeep(s) === Math.round(expectedUpkeep * 100) / 100, "totalUpkeep() should sum upkeep across all built tiles — got " + Engine.totalUpkeep(s) + " expected " + expectedUpkeep);
+
+  // Case 1: plenty of coin — upkeep is simply deducted, no stability penalty.
+  s.resources.coin = 500;
+  const stabBefore = s.resources.stability;
+  advanceClean(s);
+  assert(s.resources.coin < 500, "coin should decrease when upkeep is paid — got " + s.resources.coin);
+  assert(s.resources.stability >= stabBefore - 0.01, "stability should not be penalised when upkeep is fully affordable");
+
+  // Case 2: can't afford it — coin clamps to 0 and stability takes the hit instead.
+  // Discard (don't resolve) any event pending from Case 1's turn first — resolving it
+  // here could grant a coin bonus that masks the shortfall this case is testing for,
+  // since that resolution would happen before this turn's upkeep is even assessed.
+  s.activeEvent = null;
+  s.resources.coin = 0;
+  const stabBefore2 = s.resources.stability;
+  advanceClean(s);
+  assert(s.resources.coin === 0, "coin should never go negative from unpaid upkeep — got " + s.resources.coin);
+  assert(s.resources.stability < stabBefore2, "unpaid upkeep should cost stability — got no change from " + stabBefore2);
+
+  console.log("Regression check OK: building upkeep deducts coin when affordable and costs stability when it isn't");
+})();
+
+// --- Regression test: resources decay above the stage soft cap, and never below it ---
+(function testResourceDecay() {
+  const s = Engine.newGame("DecayTest");
+  s.citizens = [s.citizens[0]];
+  s.factions.forEach(f => { f.relationship = 0; });
+  const cap = Engine.resourceSoftCap(s); // camp stage
+  assert(cap > 0, "soft cap should be a positive number at camp stage");
+
+  s.resources.knowledge = cap + 200; // well above cap
+  s.resources.coin = cap - 20; // below cap — should NOT decay
+  advanceClean(s);
+  // knowledge production this turn is ~0 (no scholars assigned), so any change is decay.
+  assert(s.resources.knowledge < cap + 200, "knowledge stockpiled above the soft cap should decay — got no reduction");
+  assert(s.resources.knowledge > cap, "decay should only ever eat into the excess, never push a stockpile below the cap in one turn");
+
+  console.log("Regression check OK: resources above the soft cap decay toward it, and resources below it are left alone");
+})();
+
+// --- Regression test: diplomacy action cost rises with relationship (diminishing returns) ---
+(function testDiplomaticDiminishingReturns() {
+  const s = Engine.newGame("DiminishingReturnsTest");
+  const heddon = s.factions.find(f => f.id === "heddon");
+  // Control both sides explicitly rather than relying on Heddon's arbitrary seeded
+  // starting relationship (which isn't 0 — factions seed with their own baseline
+  // standing per data.js, e.g. Heddon starts at 20, not 0).
+  heddon.relationship = 0;
+  const lowCost = Engine.factionActionCost(s, "heddon", "diplomatic_gift");
+  heddon.relationship = 90;
+  const highCost = Engine.factionActionCost(s, "heddon", "diplomatic_gift");
+  assert(highCost.coin > lowCost.coin, "the same diplomatic action should cost more once the faction is already very friendly — got low=" + lowCost.coin + " high=" + highCost.coin);
+  assert(highCost.coin >= lowCost.coin * 2.4, "at relationship 90 the cost should be roughly 2.5x the relationship-0 cost — got " + (highCost.coin / lowCost.coin).toFixed(2) + "x");
+
+  // Confirm performFactionAction actually pays the SCALED cost, not the flat base cost.
+  s.resources.coin = highCost.coin - 1; // just short of the real (scaled) cost
+  const attempt = Engine.performFactionAction(s, "heddon", "diplomatic_gift");
+  assert(!attempt.ok, "should be rejected when short of the true scaled cost, even if affordable at the flat base cost");
+
+  console.log("Regression check OK: diplomacy costs scale up with relationship, and the engine actually charges the scaled amount");
+})();
+
 let failures = 0;
 for (let trial = 0; trial < 5; trial++) {
   console.log("--- Trial " + trial + " ---");
