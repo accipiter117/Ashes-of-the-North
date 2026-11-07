@@ -282,7 +282,7 @@ const GameEngine = (function () {
   function capacities(state) {
     const cap = { housing: BASE_CAMP_HOUSING, defense: 0, jobSlots: {}, tradeBonus: 0, knowledgeMult: 1, trainingBonus: 0, foodStorage: state.resourceCap.food, adjacencyStabilityFlat: 0 };
     for (const t of state.grid) {
-      if (!t.building) continue;
+      if (!t.building || t.burnt) continue;
       const b = D.BUILDINGS[t.building];
       if (!b || !b.effect) continue;
       const e = b.effect;
@@ -311,7 +311,7 @@ const GameEngine = (function () {
     if (!job.requiresBuilding || !D.BUILDINGS[job.requiresBuilding]) return mult;
     const rootId = D.BUILDINGS[job.requiresBuilding].chain[0];
     for (const t of state.grid) {
-      if (!t.building) continue;
+      if (!t.building || t.burnt) continue;
       const b = D.BUILDINGS[t.building];
       if (!b || !b.chain || b.chain[0] !== rootId) continue;
       let tileMult = (b.effect && b.effect.yieldMult) || 1;
@@ -552,6 +552,7 @@ const GameEngine = (function () {
     const t = tileAt(state.grid, x, y);
     if (!t || !t.building) return { ok: false, reason: "Nothing here to upgrade." };
     if (t.constructing) return { ok: false, reason: "Already under construction." };
+    if (t.burnt) return { ok: false, reason: "Rebuild it before improving it." };
     const cur = D.BUILDINGS[t.building];
     const chain = cur.chain;
     const idx = chain.indexOf(t.building);
@@ -612,6 +613,11 @@ const GameEngine = (function () {
       t.constructing.remaining -= dec;
       if (t.constructing.remaining <= 0) {
         const finishedId = t.constructing.buildingId;
+        if (t.constructing.repair) {
+          t.burnt = false; t.constructing = null;
+          logMsg(state, D.BUILDINGS[finishedId].name + " has been rebuilt.");
+          continue;
+        }
         const wasRuin = isRuinTile(t);
         t.building = finishedId;
         t.tier = D.BUILDINGS[finishedId].tier;
@@ -714,7 +720,7 @@ const GameEngine = (function () {
     // keep's upgrades). These were listed on the buildings but never actually applied.
     let bStab = 0, bInf = 0;
     for (const t of state.grid) {
-      const b = t.building && D.BUILDINGS[t.building];
+      const b = t.building && !t.burnt && D.BUILDINGS[t.building];
       if (!b || !b.effect) continue;
       bStab += b.effect.stability || 0;
       bInf += b.effect.influence || 0;
@@ -756,7 +762,7 @@ const GameEngine = (function () {
   function totalUpkeep(state) {
     let total = 0;
     for (const t of state.grid) {
-      if (!t.building) continue;
+      if (!t.building || t.burnt) continue;
       const b = D.BUILDINGS[t.building];
       if (b && b.upkeep && b.upkeep.coin) total += b.upkeep.coin;
     }
@@ -973,12 +979,12 @@ const GameEngine = (function () {
   function chainTier(state, rootId) {
     let best = -1;
     for (const t of state.grid) {
-      const b = t.building && D.BUILDINGS[t.building];
+      const b = t.building && !t.burnt && D.BUILDINGS[t.building];
       if (b && b.chain && b.chain[0] === rootId) best = Math.max(best, b.tier || 0);
     }
     return best;
   }
-  function chainCount(state, ids) { return state.grid.filter(t => ids.includes(t.building)).length; }
+  function chainCount(state, ids) { return state.grid.filter(t => !t.burnt && ids.includes(t.building)).length; }
 
   // Goods households use each month: ale and furniture once they expect them,
   // herbs as home remedies once health matters; weapons and tools wear out.
@@ -1201,6 +1207,428 @@ const GameEngine = (function () {
   }
 
   // ---------------------------------------------------------------
+  // BATTLES ON THE MAP
+  // ---------------------------------------------------------------
+  // Attacks on the settlement are fought out on the map in real time: raiders
+  // walk in from the road, monsters rise from the river, woods or ruins, soldiers
+  // muster at their posts and go to meet them, archers and towers shoot, and
+  // everyone else runs for shelter. Everything is decided here, so what the
+  // map shows is what happens: the people caught outside, the stores carried
+  // off, the buildings set alight. Time is in game seconds (a month is
+  // MONTH_SECONDS); the UI ticks it in real time and advanceTurn finishes any
+  // battle still running, so headless play and tests resolve the same way.
+  const MONTH_SECONDS = 72;
+  const BATTLE_LIMIT = 70;          // attackers withdraw after this long
+  const SHELTER_SECONDS = 6;        // how long it takes people to get indoors after the alarm
+  const ATTACKER_KINDS = {
+    raider:  { name: "Raider",  hp: 13, dmg: 2.4, speed: 1.15, range: 0.45, cd: 1.0, loots: true, burns: true, flees: 0.5 },
+    warrior: { name: "Warrior", hp: 15, dmg: 2.5, speed: 1.0,  range: 0.45, cd: 1.0, loots: true, burns: true, flees: 0.5 },
+    drowner: { name: "Drowner", hp: 11, dmg: 2.6, speed: 0.95, range: 0.45, cd: 1.1, hunts: true },
+    nekker:  { name: "Nekker",  hp: 9,  dmg: 2.2, speed: 1.35, range: 0.4,  cd: 0.8, hunts: true },
+    ghoul:   { name: "Ghoul",   hp: 15, dmg: 3.0, speed: 0.85, range: 0.45, cd: 1.2, hunts: true }
+  };
+  const DEFENDER_STATS = {
+    militia: { hp: 12, dmg: 2.1, range: 0.45, cd: 1.0 },
+    guard:   { hp: 15, dmg: 2.6, range: 0.45, cd: 1.0 },
+    archer:  { hp: 10, dmg: 2.2, range: 3.2,  cd: 1.4 },
+    scout:   { hp: 10, dmg: 1.6, range: 0.45, cd: 0.9 }
+  };
+  const TOWER_FIRE = { watchtower: { dps: 2.0, range: 3.8 }, fortkeep: { dps: 3.4, range: 4.2 }, manor: { dps: 4.2, range: 4.6 } };
+  const HIT_CHANCE = 0.62;          // blows and arrows miss; keeps fights from being foregone conclusions
+  const STORE_ROOTS = ["storehouse", "market", "workshop", "brewhouse", "joinery"];
+  // where each kind of worker is out in the open, by job
+  const OUTDOOR_JOBS = { farmer: "farm", fisherman: "dock", lumberjack: "forest", miner: "mine", herbalist: "forest", builder: "constructing", mason: "constructing" };
+
+  function tileKey(t) { return t.x + "," + t.y; }
+  function isBurnt(t) { return !!(t && t.burnt); }
+  function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+  function battleActive(state) { return !!(state.battle && !state.battle.outcome); }
+
+  function edgeSpawn(state, from, i) {
+    const W = GRID_W, H = GRID_H;
+    const forest = state.grid.filter(t => t.terrain === "forest" && !t.building);
+    const ruins = state.grid.filter(t => t.building && isRuinTile(t));
+    const jitter = () => (rand() - 0.5) * 0.8;
+    if (from === "river") return { x: 1.2 + rand() * 1.4, y: 1 + rand() * (H - 2) };
+    if (from === "forest" && forest.length) { const t = forest[Math.floor(rand() * forest.length)]; return { x: t.x + 0.5 + jitter(), y: t.y + 0.5 + jitter() }; }
+    if (from === "ruins" && ruins.length) { const t = ruins[i % ruins.length]; return { x: t.x + 0.5 + jitter(), y: t.y + 0.9 + rand() * 0.5 }; }
+    if (from === "north") return { x: 5 + rand() * (W - 8), y: 0.3 };
+    return { x: W - 0.3 - rand() * 0.6, y: 7.5 + jitter() };     // the east road
+  }
+
+  // Begin a battle. spec: { kind, count, from, label, mode ("hold" keeps soldiers inside
+  // the settlement, "sally" sends them out), source, eventId, optionIndex, strength }
+  function startBattle(state, spec) {
+    if (battleActive(state)) finishBattleNow(state);
+    const k = ATTACKER_KINDS[spec.kind] || ATTACKER_KINDS.raider;
+    const attackers = [];
+    for (let i = 0; i < spec.count; i++) {
+      const p = edgeSpawn(state, spec.from, i);
+      attackers.push({ id: "a" + i, kind: spec.kind, x: p.x, y: p.y, hp: k.hp, maxHp: k.hp, cd: rand() * k.cd, state: "approach", carry: 0, target: null, hitT: 99 });
+    }
+    // soldiers muster at the guardhouse (or the old keep, or the fire)
+    const posts = state.grid.filter(t => t.building && !isBurnt(t) && ["guardhouse", "barracks", "trainingyard"].includes(t.building));
+    const keep = state.grid.find(t => t.building && D.BUILDINGS[t.building].chain[0] === "keep");
+    const muster = posts[0] || keep || { x: 9, y: 6 };
+    const cap = capacities(state);
+    const armed = armedFraction(state);
+    const { mult } = techMult(state, "militaryMult");
+    const { mult: emult } = edictMult(state, "militaryMult");
+    const training = 1 + (state.flags.trainingBonusTurns > 0 ? cap.trainingBonus + 0.15 : cap.trainingBonus);
+    const defenders = [];
+    for (const c of livingCitizens(state)) {
+      const st = DEFENDER_STATS[c.job];
+      if (!st || c.away) continue;
+      defenders.push({ id: c.id, job: c.job, x: muster.x + 0.5 + (rand() - 0.5) * 0.8, y: muster.y + 0.8 + rand() * 0.4,
+        hp: st.hp, maxHp: st.hp, dmg: st.dmg * (0.5 + 0.5 * armed) * mult * emult * training, range: st.range, cd: rand() * st.cd, cdMax: st.cd, state: "muster", hitT: 99 });
+    }
+    // formal allies send a few spears
+    const allies = (state.factions || []).filter(f => f.allied);
+    allies.forEach((f, ai) => { for (let i = 0; i < 2; i++) defenders.push({ id: "ally" + ai + i, job: "guard", ally: f.name, x: 18.5, y: 7.2 + i * 0.6, hp: 15, maxHp: 15, dmg: 2.4, range: 0.45, cd: rand(), cdMax: 1, state: "muster", hitT: 99 }); });
+    state.battle = {
+      id: (state.battleCount = (state.battleCount || 0) + 1),
+      kind: spec.kind, label: spec.label || (k.name + "s"), mode: spec.mode || "sally", from: spec.from,
+      t: 0, attackers, defenders, shots: [], deaths: [], fires: {}, burnt: [], looted: { food: 0, coin: 0 }, recovered: 0,
+      lootGoal: k.loots ? spec.count * 10 : 0, armour: Math.min(0.45, cap.defense / 120),
+      source: spec.source || "raid", factionId: spec.factionId || null, eventId: spec.eventId || null, optionIndex: spec.optionIndex,
+      outcome: null
+    };
+    logMsg(state, "Alarm! " + state.battle.label + " are attacking " + state.settlementName + ".");
+    return state.battle;
+  }
+
+  function nearestOf(list, from, filter) {
+    let best = null, bd = Infinity;
+    for (const u of list) { if (filter && !filter(u)) continue; const d = dist(u, from); if (d < bd) { bd = d; best = u; } }
+    return best;
+  }
+  function moveToward(u, target, speed, dt) {
+    const d = dist(u, target);
+    if (d < 0.02) return true;
+    const step = Math.min(d, speed * dt);
+    u.x += (target.x - u.x) / d * step; u.y += (target.y - u.y) / d * step;
+    u.fx = target.x > u.x ? 1 : -1;
+    return step >= d;
+  }
+  function settlementBox(state) {
+    const built = state.grid.filter(t => t.building || t.constructing);
+    let x0 = 7, x1 = 13, y0 = 4, y1 = 10;
+    for (const t of built) { x0 = Math.min(x0, t.x); x1 = Math.max(x1, t.x + 1); y0 = Math.min(y0, t.y); y1 = Math.max(y1, t.y + 1); }
+    return { x0: x0 - 0.5, x1: x1 + 0.5, y0: y0 - 0.5, y1: y1 + 0.5 };
+  }
+  function inBox(b, u, pad) { pad = pad || 0; return u.x >= b.x0 - pad && u.x <= b.x1 + pad && u.y >= b.y0 - pad && u.y <= b.y1 + pad; }
+
+  // Who can still be caught outside at a tile, by what they do there.
+  function exposedAt(state, t) {
+    const root = t.building ? D.BUILDINGS[t.building].chain[0] : (t.constructing ? "constructing" : t.terrain);
+    const jobs = Object.keys(OUTDOOR_JOBS).filter(j => OUTDOOR_JOBS[j] === root || (OUTDOOR_JOBS[j] === "constructing" && t.constructing));
+    return livingCitizens(state).filter(c => jobs.includes(c.job) && !c.sheltered);
+  }
+
+  function pickAttackerTarget(state, a) {
+    const k = ATTACKER_KINDS[a.kind];
+    const b = state.battle;
+    const caught = b.t < SHELTER_SECONDS;
+    let tiles;
+    if (k.hunts) {
+      // monsters go for wherever people work outdoors, then for houses
+      tiles = state.grid.filter(t => (t.building && ["farm", "farm2", "farm3", "dock", "mine"].includes(t.building)) || t.constructing || (t.terrain === "forest" && !t.building));
+      if (!caught || !tiles.length) tiles = state.grid.filter(t => t.building && !isRuinTile(t) && !isBurnt(t));
+    } else {
+      // raiders go for the stores first, then anything worth burning
+      tiles = state.grid.filter(t => t.building && !isBurnt(t) && STORE_ROOTS.includes(D.BUILDINGS[t.building].chain[0]) && !isRuinTile(t));
+      if (!tiles.length || a.carry >= 10) tiles = state.grid.filter(t => t.building && !isBurnt(t) && !isRuinTile(t) && D.BUILDINGS[t.building].chain[0] === "house");
+    }
+    if (!tiles.length) {
+      // nothing worth taking: they come looking for a fight at the heart of the place
+      const keep = state.grid.find(t => t.building && D.BUILDINGS[t.building].chain[0] === "keep") || { x: 9, y: 6 };
+      return { x: keep.x + 1 + (rand() - 0.5), y: keep.y + 1.5 + (rand() - 0.5) * 0.6, key: tileKey(keep) };
+    }
+    tiles.sort((p, q) => dist({ x: p.x + 0.5, y: p.y + 0.5 }, a) - dist({ x: q.x + 0.5, y: q.y + 0.5 }, a));
+    const t = tiles[Math.floor(rand() * Math.min(3, tiles.length))];
+    return { x: t.x + 0.5 + (rand() - 0.5) * 0.4, y: t.y + 0.5 + (rand() - 0.5) * 0.4, key: tileKey(t) };
+  }
+
+  function killCitizen(state, c, cause) {
+    if (!c || !c.alive) return;
+    c.alive = false; c.job = null;
+    state.stats.deaths++;
+    if (c.important) {
+      chronicle(state, c.name + " was killed " + (cause === "monster" ? "by monsters" : "in the fighting") + ". Their memory will be recorded.");
+      handleSuccession(state, c);
+    } else {
+      logMsg(state, c.name + " was killed " + (cause === "monster" ? "by monsters" : "in the fighting") + ".");
+    }
+  }
+
+  function tickBattle(state, dt) {
+    const b = state.battle;
+    if (!b || b.outcome) return null;
+    // small fixed steps keep fights fair at any game speed
+    while (dt > 1e-6 && !b.outcome) {
+      const h = Math.min(0.1, dt);
+      dt -= h;
+      stepBattle(state, b, h);
+    }
+    return b.outcome;
+  }
+
+  function stepBattle(state, b, h) {
+    b.t += h;
+    const box = settlementBox(state);
+    const live = b.attackers.filter(a => a.state !== "dead" && a.state !== "gone");
+    const up = b.defenders.filter(d => d.state !== "down");
+    for (const u of b.attackers) u.hitT += h;
+    for (const u of b.defenders) u.hitT += h;
+    if (b.t >= SHELTER_SECONDS && !b.sheltered) {
+      b.sheltered = true;
+      for (const c of livingCitizens(state)) c.sheltered = true;
+    }
+    // --- attackers
+    const lost = b.attackers.filter(a => a.state === "dead").length / Math.max(1, b.attackers.length);
+    for (const a of live) {
+      const k = ATTACKER_KINDS[a.kind];
+      if (a.state === "flee") {
+        const exit = a.kind === "drowner" ? { x: 1, y: a.y } : { x: GRID_W + 0.5, y: 7.5 };
+        if (moveToward(a, exit, k.speed * 1.1, h) || a.x < 0.6 || a.x > GRID_W) a.state = "gone";
+        continue;
+      }
+      if (k.flees && lost >= k.flees) { b.broke = true; a.state = "flee"; continue; }
+      if (b.t >= BATTLE_LIMIT) { a.state = "flee"; continue; }
+      if (k.loots && a.carry >= 10 && a.state !== "fight") {
+        // arms full: some put a torch to a house on the way out
+        if (k.burns && !a.torched && a.wantsTorch === undefined) a.wantsTorch = rand() < 0.45;
+        if (!a.wantsTorch || a.torched) { a.state = "flee"; continue; }
+        if (!a.target || a.target.kind !== "torch") {
+          const houses = state.grid.filter(t => t.building && !isBurnt(t) && !isRuinTile(t) && D.BUILDINGS[t.building].chain[0] === "house");
+          const near = nearestOf(houses.map(t => ({ x: t.x + 0.5, y: t.y + 0.5, key: tileKey(t), kind: "torch" })), a);
+          if (!near) { a.state = "flee"; continue; }
+          a.target = near;
+        }
+      }
+      // fight anyone close
+      const foe = nearestOf(up, a, d => d.state !== "down");
+      if (foe && dist(foe, a) < 1.6) {
+        a.state = "fight";
+        if (dist(foe, a) > k.range) moveToward(a, foe, k.speed, h);
+        else if ((a.cd -= h) <= 0) {
+          a.cd = k.cd;
+          if (rand() < HIT_CHANCE) foe.hp -= k.dmg * (1 - b.armour);
+          foe.hitT = 0;
+          if (foe.hp <= 0) { foe.hp = 0; foe.state = "down"; }
+        }
+        continue;
+      }
+      if (a.state === "fight") a.state = "approach";
+      if (!a.target) a.target = pickAttackerTarget(state, a);
+      if (!a.target) { a.state = "flee"; continue; }
+      if (!moveToward(a, a.target, k.speed, h)) continue;
+      // arrived: catch whoever is still outside, loot, burn
+      const [tx, ty] = a.target.key.split(",").map(Number);
+      const t = tileAt(state.grid, tx, ty);
+      if (!t) { a.target = null; continue; }
+      if (!b.sheltered && !(b.scattered || (b.scattered = {}))[a.target.key]) {
+        // the first one there may catch someone; everyone else at that spot runs for it
+        b.scattered[a.target.key] = true;
+        const victims = rand() < 0.5 ? exposedAt(state, t) : [];
+        if (victims.length) {
+          const v = victims[Math.floor(rand() * victims.length)];
+          b.deaths.push({ id: v.id, x: a.x + 0.2, y: a.y + 0.1, t: b.t, by: a.kind });
+          killCitizen(state, v, k.hunts ? "monster" : "raid");
+        }
+      }
+      a.dwell = (a.dwell || 0) + h;
+      if (k.loots && t.building && STORE_ROOTS.includes(D.BUILDINGS[t.building].chain[0])) {
+        const take = Math.min(10 - a.carry, 3 * h);
+        const food = Math.min(state.resources.food, take * 0.6), coin = Math.min(state.resources.coin, take * 0.4);
+        state.resources.food = round2(state.resources.food - food); state.resources.coin = round2(state.resources.coin - coin);
+        a.carry += food + coin; b.looted.food += food; b.looted.coin += coin;
+        if (state.resources.food + state.resources.coin < 1) a.carry = 10;
+      } else if (k.burns && t.building && !isRuinTile(t) && !isBurnt(t)) {
+        const key = tileKey(t);
+        if (b.fires[key] === undefined && rand() < (a.wantsTorch ? 0.8 : 0.25) * h) b.fires[key] = 0.01;
+        if (b.fires[key] !== undefined && a.wantsTorch) a.torched = true;
+      }
+      if (a.dwell > 4) { a.dwell = 0; a.target = null; }
+    }
+    // fires spread through a building while the battle lasts
+    for (const key in b.fires) {
+      if (b.fires[key] >= 1) continue;
+      b.fires[key] = Math.min(1, b.fires[key] + h / 14);
+      if (b.fires[key] >= 1) {
+        const [x, y] = key.split(",").map(Number);
+        const t = tileAt(state.grid, x, y);
+        if (t && !t.burnt) { t.burnt = true; b.burnt.push(key); }
+      }
+    }
+    // --- defenders
+    const targets = b.attackers.filter(a => a.state !== "dead" && a.state !== "gone");
+    for (const d of up) {
+      if (d.state === "down") continue;
+      const foe = nearestOf(targets, d, a => b.mode !== "hold" || inBox(box, a, 1.5));
+      if (!foe) {
+        // nothing to fight: back toward the muster point
+        if (d.state !== "muster") d.state = "muster";
+        continue;
+      }
+      d.state = "fight";
+      const gap = dist(foe, d);
+      if (gap > d.range) moveToward(d, foe, d.job === "scout" ? 1.4 : 1.15, h);
+      else if ((d.cd -= h) <= 0) {
+        d.cd = d.cdMax;
+        if (rand() < HIT_CHANCE) { foe.hp -= d.dmg; foe.hitT = 0; }
+        if (d.range > 1) b.shots.push({ fx: d.x, fy: d.y - 0.1, tx: foe.x, ty: foe.y, t: b.t });
+        if (foe.hp <= 0) dropAttacker(state, b, foe);
+      }
+    }
+    // --- towers
+    for (const t of state.grid) {
+      const tf = !isBurnt(t) && TOWER_FIRE[t.building];
+      if (!tf) continue;
+      const tw = { x: t.x + 0.5, y: t.y + 0.3 };
+      const foe = nearestOf(targets, tw, a => a.hp > 0 && dist(a, tw) <= tf.range);
+      if (!foe) continue;
+      if (!b.towerCd) b.towerCd = {};
+      const tk = tileKey(t);
+      b.towerCd[tk] = (b.towerCd[tk] || 0) - h;
+      if (b.towerCd[tk] <= 0) {
+        b.towerCd[tk] = 1.2;
+        if (rand() < HIT_CHANCE) { foe.hp -= tf.dps * 1.2; foe.hitT = 0; }
+        b.shots.push({ fx: tw.x, fy: tw.y, tx: foe.x, ty: foe.y, t: b.t });
+        if (foe.hp <= 0) dropAttacker(state, b, foe);
+      }
+    }
+    if (b.shots.length > 40) b.shots.splice(0, b.shots.length - 40);
+    // --- end
+    const still = b.attackers.filter(a => a.state !== "dead" && a.state !== "gone");
+    if (!still.length) {
+      // once the attackers are gone, people come out with buckets; a fire may still win
+      let burning = false;
+      for (const key in b.fires) {
+        if (b.fires[key] >= 1) continue;
+        if (rand() < 0.14 * h) { delete b.fires[key]; continue; }
+        burning = true;
+      }
+      if (!burning) endBattle(state, b);
+    }
+  }
+
+  function dropAttacker(state, b, a) {
+    a.hp = 0; a.state = "dead";
+    // whatever they carried is left where they fell, and gathered up again
+    if (a.carry > 0) {
+      const share = a.carry / Math.max(1e-6, b.looted.food + b.looted.coin);
+      const food = b.looted.food * share, coin = b.looted.coin * share;
+      state.resources.food = round2(state.resources.food + food); state.resources.coin = round2(state.resources.coin + coin);
+      b.looted.food -= food; b.looted.coin -= coin; b.recovered += a.carry; a.carry = 0;
+    }
+  }
+
+  function endBattle(state, b) {
+    const killed = b.attackers.filter(a => a.state === "dead").length;
+    const stolen = b.looted.food + b.looted.coin;
+    // won: they broke and ran, or were cut down. What they stole or burned is its own cost.
+    const civilianDeaths = b.deaths.filter(d => !d.soldier).length;
+    const won = killed === b.attackers.length || (b.broke && stolen < Math.max(6, b.lootGoal * 0.5)) ||
+      (stolen < 6 && b.burnt.length === 0 && civilianDeaths === 0);
+    b.outcome = won ? "won" : "lost";
+    // fires still smouldering are put out
+    for (const key in b.fires) if (b.fires[key] < 1) delete b.fires[key];
+    for (const c of state.citizens) delete c.sheltered;
+    // the fallen: two in five of those cut down don't get up again
+    const fallen = [];
+    for (const d of b.defenders) {
+      if (d.state !== "down" || d.ally) continue;
+      const c = state.citizens.find(x => x.id === d.id);
+      if (c && c.alive && chance(0.4)) { fallen.push(c.name); b.deaths.push({ id: c.id, x: d.x, y: d.y, t: b.t, soldier: true }); killCitizen(state, c, "battle"); }
+    }
+    if (b.burnt.length) trimJobsToCapacity(state);
+    if (won) { state.stats.battlesWon++; state.resources.reputation = clamp(round2(state.resources.reputation + 3), 0, 100); }
+    else {
+      state.stats.battlesLost++;
+      state.flags.raidLostTurn = state.meta.turn;
+      state.resources.stability = clamp(round2(state.resources.stability - 4 - b.burnt.length * 2), 0, 100);
+    }
+    const what = [];
+    if (Math.round(stolen) > 0) what.push(Math.round(b.looted.food) + " food and " + Math.round(b.looted.coin) + " coin carried off");
+    if (b.burnt.length) what.push(b.burnt.length + " building" + (b.burnt.length > 1 ? "s" : "") + " burned");
+    const dead = b.deaths.length;
+    if (dead) what.push(dead + " dead");
+    const who = /^(the|house) /i.test(b.label) ? b.label : "The " + b.label.toLowerCase();
+    b.summary = (won ? who + " were driven off" : who + " got the better of the defence") + (what.length ? ": " + what.join(", ") + "." : ".");
+    // an event's own consequences follow the battle
+    const def = b.eventId ? eventDef(b.eventId) : null;
+    const cc = def && def.options[b.optionIndex] && def.options[b.optionIndex].combatCheck;
+    if (cc) {
+      if (won) {
+        if (cc.winEffect) applyEffectBundle(state, scaleEventEffect(state, cc.winEffect));
+        if (cc.winFollowUp) scheduleEvent(state, cc.winFollowUp.eventId, cc.winFollowUp.delayTurns);
+        chronicle(state, cc.winChronicle || b.summary);
+      } else {
+        // what was taken or burned is the material loss; the rest of the blow still lands
+        const rest = {};
+        for (const k in (cc.loseEffect || {})) if (!["food", "coin", "wood", "stone", "iron"].includes(k)) rest[k] = cc.loseEffect[k];
+        applyEffectBundle(state, scaleEventEffect(state, rest));
+        if (cc.loseFollowUp) scheduleEvent(state, cc.loseFollowUp.eventId, cc.loseFollowUp.delayTurns);
+        chronicle(state, cc.loseChronicle || b.summary);
+      }
+    } else {
+      chronicle(state, b.summary);
+    }
+    if (fallen.length) logMsg(state, "Fallen in the defence: " + fallen.join(", ") + ".");
+  }
+
+  // Run a battle to its end straight away (skipping ahead, tests, or the month turning over).
+  function finishBattleNow(state) {
+    let guard = 0;
+    while (battleActive(state) && guard++ < 2000) tickBattle(state, 0.25);
+    if (battleActive(state)) { state.battle.t = BATTLE_LIMIT; for (const a of state.battle.attackers) if (a.state !== "dead") a.state = "gone"; endBattle(state, state.battle); }
+  }
+
+  // After buildings burn, anyone whose workplace is gone goes idle.
+  function trimJobsToCapacity(state) {
+    for (const jobId in D.JOBS) {
+      const max = jobCapacityMax(state, jobId);
+      const workers = citizensInJob(state, jobId);
+      for (let i = max; i < workers.length; i++) workers[i].job = null;
+    }
+  }
+
+  // Burnt buildings can be rebuilt for half their cost.
+  function repairCost(t) {
+    const b = D.BUILDINGS[t.building];
+    const cost = {};
+    for (const k in (b.cost || {})) cost[k] = Math.ceil(b.cost[k] / 2);
+    return cost;
+  }
+  function queueRepair(state, x, y) {
+    const t = tileAt(state.grid, x, y);
+    if (!t || !t.burnt) return { ok: false, reason: "Nothing here needs rebuilding." };
+    if (t.constructing) return { ok: false, reason: "Already being rebuilt." };
+    if (battleActive(state)) return { ok: false, reason: "Wait until the fighting is over." };
+    const cost = repairCost(t);
+    if (!canAfford(state, cost)) return { ok: false, reason: "Not enough resources." };
+    pay(state, cost);
+    const time = Math.max(1, Math.ceil((D.BUILDINGS[t.building].buildTime || 1) / 2));
+    t.constructing = { buildingId: t.building, remaining: time, totalTime: time, repair: true };
+    return { ok: true };
+  }
+
+  // Monsters come out of their own accord now and then once the settlement is worth the trouble.
+  function maybeMonsterIncursion(state) {
+    if (battleActive(state) || stageIndex(state) < 1 || !chance(0.035)) return false;
+    const options = [];
+    if (state.grid.some(t => t.building === "dock") || citizensInJob(state, "fisherman").length) options.push({ kind: "drowner", from: "river", label: "Drowners" });
+    if (state.grid.some(t => t.terrain === "forest" && !t.building)) options.push({ kind: "nekker", from: "forest", label: "Nekkers" });
+    if (state.grid.some(t => t.building && isRuinTile(t))) options.push({ kind: "ghoul", from: "ruins", label: "Ghouls" });
+    if (!options.length) return false;
+    const o = options[Math.floor(rand() * options.length)];
+    const count = clamp(Math.round((2 + stageIndex(state) * 1.2) * (0.7 + rand() * 0.6)), 2, 9);
+    startBattle(state, { kind: o.kind, from: o.from, label: o.label, count, mode: "sally", source: "monsters" });
+    return true;
+  }
+
+  // ---------------------------------------------------------------
   // KINGDOM EFFECTS TICK
   // ---------------------------------------------------------------
   function tickKingdomEffects(state) {
@@ -1308,7 +1736,7 @@ const GameEngine = (function () {
       if (f.relationship > 0) f.relationship = round2(f.relationship - 0.15);
       if (f.relationship < 0) f.relationship = round2(f.relationship + 0.1);
       // hostile opportunists/bandits may raid if relationship very low
-      if ((f.id === "bandits" || f.personality === "opportunist") && f.relationship < -20 && chance(0.08)) {
+      if ((f.id === "bandits" || f.personality === "opportunist") && f.relationship < -20 && chance(0.05)) {
         triggerRaid(state, f);
       }
       // reputation influences noble/garrison relations passively
@@ -1391,29 +1819,13 @@ const GameEngine = (function () {
     }
   }
 
+  // A hostile faction raids: its band walks in along the road (see startBattle).
   function triggerRaid(state, f) {
+    if (battleActive(state)) return;
     const attackStrength = (f.military || 20) * (0.6 + rand() * 0.6);
-    const cap = capacities(state);
-    const defense = militaryStrength(state) * 2 + cap.defense;
-    const trainingBonus = state.flags.trainingBonusTurns > 0 ? cap.trainingBonus + 0.15 : cap.trainingBonus;
-    const effectiveDefense = defense * (1 + trainingBonus);
-    const total = attackStrength + effectiveDefense;
-    const winChance = total > 0 ? effectiveDefense / total : 0.5;
-    if (chance(winChance)) {
-      state.stats.battlesWon++;
-      state.resources.reputation = clamp(round2(state.resources.reputation + 3), 0, 100);
-      chronicle(state, f.name + " raided the settlement and were driven off.");
-    } else {
-      state.stats.battlesLost++;
-      state.flags.raidLostTurn = state.meta.turn;
-      const lossCoin = Math.min(state.resources.coin, 10 + Math.floor(rand() * 20));
-      const lossFood = Math.min(state.resources.food, 10 + Math.floor(rand() * 15));
-      state.resources.coin = round2(state.resources.coin - lossCoin);
-      state.resources.food = round2(state.resources.food - lossFood);
-      state.resources.stability = clamp(round2(state.resources.stability - 6), 0, 100);
-      if (chance(0.35)) killRandomCitizen(state, "battle");
-      chronicle(state, f.name + " raided the settlement, making off with supplies.");
-    }
+    // a raiding party, not the whole company; bigger as the settlement grows richer
+    const count = clamp(Math.round(attackStrength / 9 + stageIndex(state) * 0.6), 2, 9);
+    startBattle(state, { kind: "raider", from: chance(0.5) ? "east" : "north", label: f.name, count, mode: "sally", source: "raid", factionId: f.id });
   }
 
   // ---------------------------------------------------------------
@@ -1507,7 +1919,13 @@ const GameEngine = (function () {
     if (!opt) return { ok: false, reason: "Invalid option." };
     if (!eventOptionAffordable(state, optionIndex)) return { ok: false, reason: "The stores can't cover that choice." };
     let combatWon = null;
-    if (opt.combatCheck) {
+    if (opt.combatCheck && opt.combatCheck.onMap) {
+      // fought out on the map; its consequences follow the battle (see endBattle)
+      const m = opt.combatCheck.onMap;
+      startBattle(state, { kind: m.kind, from: m.from, label: m.label, mode: m.mode, count: clamp(Math.round(opt.combatCheck.attackerStrength / 6), 2, 12),
+        source: "event", eventId: state.activeEvent.id, optionIndex });
+      combatWon = null;
+    } else if (opt.combatCheck) {
       combatWon = resolveEventCombat(state, opt.combatCheck);
     } else {
       applyEffectBundle(state, scaleEventEffect(state, opt.effect));
@@ -1722,6 +2140,7 @@ const GameEngine = (function () {
   // ---------------------------------------------------------------
   function advanceTurn(state) {
     if (state.activeEvent) return { ok: false, reason: "Resolve the current event first." };
+    if (battleActive(state)) finishBattleNow(state);
     state.meta.turn++;
     state.meta.month++;
     if (state.meta.month > 12) { state.meta.month = 1; state.meta.year++; }
@@ -1742,6 +2161,7 @@ const GameEngine = (function () {
     runResourceDecay(state);
     maybeTriggerKingdomEvent(state);
     maybeTriggerLocalEvent(state);
+    if (!state.activeEvent) maybeMonsterIncursion(state);
 
     return { ok: true, season: getSeason(state.meta.month) };
   }
@@ -1831,7 +2251,8 @@ const GameEngine = (function () {
     militaryStrength, legacyScore,
     saveGame, loadGame, hasSave, deleteSave,
     tileAt, isRuinTile, builtTiles, adjacencyBonusForTile, previewAdjacency,
-    needsReport, groupReport, scaleEventEffect, armedFraction, toolCoverage, settlementHappiness, groupApproval,
+    needsReport, groupReport, scaleEventEffect,
+    MONTH_SECONDS, ATTACKER_KINDS, startBattle, tickBattle, finishBattleNow, battleActive, queueRepair, repairCost, armedFraction, toolCoverage, settlementHappiness, groupApproval,
     toggleEdict, getFactionRelation, eventOptionShortfall, eventOptionAffordable, previewCombatChance, totalUpkeep, resourceSoftCap, factionActionCost
   };
 })();

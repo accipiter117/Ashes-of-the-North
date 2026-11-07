@@ -45,20 +45,110 @@ const UI = (function () {
     return el ? el.id.replace("view-", "") : "settlement";
   }
 
+  // ---------------------------------------------------------------
+  // TIME: real time with pause. Each month is one day and night on the map
+  // (E.MONTH_SECONDS of game time); speed runs it 1x, 2x or 4x; events pause it.
+  // Battles are ticked here too, so they carry on whichever screen is open.
+  // ---------------------------------------------------------------
+  const REALTIME = typeof navigator !== "undefined" && !/jsdom/i.test(navigator.userAgent || "") && typeof requestAnimationFrame === "function";
+  const SPEEDS = [1, 2, 4];
+  let speed = 1, paused = false, monthT = 0, lastTs = 0, clockRunning = false, battleSeen = null, lastBannerText = "";
+  function gameClock() { return { phase: monthT / E.MONTH_SECONDS, speed: (paused || state.activeEvent) ? 0 : speed }; }
+
   function wireTurnButton() {
-    document.getElementById("turnBtn").addEventListener("click", onAdvanceTurn);
+    document.getElementById("turnBtn").addEventListener("click", () => onAdvanceTurn(false));
+    document.getElementById("pauseBtn").addEventListener("click", () => setPaused(!paused));
+    document.getElementById("speedBtn").addEventListener("click", () => setSpeed(SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length]));
+    document.getElementById("battleBanner").addEventListener("click", () => { switchView("settlement"); centreOnBattle(); });
+    document.addEventListener("keydown", e => {
+      if (e.code === "Space" && !/input|select|textarea/i.test((e.target && e.target.tagName) || "")) { e.preventDefault(); setPaused(!paused); }
+    });
+    updateClockUI();
+    if (REALTIME && !clockRunning) { clockRunning = true; requestAnimationFrame(clockFrame); }
+  }
+  function setPaused(p) { paused = p; updateClockUI(); }
+  function setSpeed(v) { speed = v; updateClockUI(); }
+  function updateClockUI() {
+    const pb = document.getElementById("pauseBtn"), sb = document.getElementById("speedBtn"), fill = document.getElementById("monthFill");
+    if (pb) { pb.textContent = paused ? "▶" : "⏸"; pb.classList.toggle("paused", paused); }
+    if (sb) sb.textContent = speed + "×";
+    if (fill) fill.style.width = Math.round(monthT / E.MONTH_SECONDS * 100) + "%";
   }
 
-  function onAdvanceTurn() {
-    if (state.activeEvent) { toast("Resolve the current matter before the month advances."); openEventModal(); return; }
+  function clockFrame(ts) {
+    const dt = Math.min(0.25, (ts - (lastTs || ts)) / 1000);
+    lastTs = ts;
+    if (state && !paused && !state.activeEvent && !document.hidden) {
+      const g = dt * speed;
+      if (E.battleActive(state)) {
+        E.tickBattle(state, g);
+        if (!E.battleActive(state)) onBattleEnd();
+      }
+      monthT += g;
+      if (monthT >= E.MONTH_SECONDS) { monthT -= E.MONTH_SECONDS; onAdvanceTurn(true); }
+    }
+    updateClockUI();
+    updateBattleBanner();
+    requestAnimationFrame(clockFrame);
+  }
+
+  function onAdvanceTurn(auto) {
+    if (state.activeEvent) { if (!auto) toast("Resolve the current matter before the month advances."); openEventModal(); return; }
+    if (!auto) monthT = 0;                       // skipping ahead starts the new month at midnight
     const chronicleLenBefore = state.chronicle.length;
+    const hadBattle = E.battleActive(state);
     const res = E.advanceTurn(state);
     if (!res.ok) { toast(res.reason); return; }
+    if (hadBattle && state.battle && state.battle.outcome) onBattleEnd(true);
     E.saveGame(state);
     renderAll();
     const newEntries = state.chronicle.slice(chronicleLenBefore);
     if (newEntries.length) toast(newEntries[newEntries.length - 1].text);
+    checkBattleStart();
     if (state.activeEvent) openEventModal();
+  }
+
+  // ---------------------------------------------------------------
+  // BATTLES
+  // ---------------------------------------------------------------
+  function checkBattleStart() {
+    if (!E.battleActive(state) || state.battle.id === battleSeen) return;
+    battleSeen = state.battle.id;
+    const b = state.battle;
+    const from = { east: "along the east road", north: "from the north", river: "out of the river", forest: "out of the woods", ruins: "from the old ruins" }[b.from] || "";
+    toast("⚔ " + b.label + " are attacking " + from + "!");
+    if (speed > 1) setSpeed(1);                  // let the player see it
+    if (activeViewName() === "settlement") centreOnBattle();
+  }
+  function onBattleEnd(quiet) {
+    const b = state.battle;
+    if (!b || !b.outcome) return;
+    if (!quiet) toast((b.outcome === "won" ? "🛡 " : "🔥 ") + b.summary);
+    E.saveGame(state);
+    renderAll();
+  }
+  function centreOnBattle() {
+    const b = state.battle, wrap = document.getElementById("mapWrap");
+    if (!b || !wrap) return;
+    const live = b.attackers.filter(a => a.state !== "dead" && a.state !== "gone");
+    if (!live.length) return;
+    const x = live.reduce((s, a) => s + a.x, 0) / live.length, y = live.reduce((s, a) => s + a.y, 0) / live.length;
+    wrap.scrollTo({ left: Math.max(0, x * mapZoom - wrap.clientWidth / 2), top: Math.max(0, y * mapZoom - wrap.clientHeight / 2), behavior: "smooth" });
+  }
+  function updateBattleBanner() {
+    const el = document.getElementById("battleBanner");
+    if (!el) return;
+    const active = state && E.battleActive(state);
+    if (!active) { if (!el.hidden) { el.hidden = true; lastBannerText = ""; } return; }
+    const b = state.battle;
+    const foes = b.attackers.filter(a => a.state !== "dead" && a.state !== "gone").length;
+    const ours = b.defenders.filter(d => d.state !== "down").length;
+    const fires = Object.keys(b.fires).filter(k => b.fires[k] < 1).length;
+    const text = "⚔ " + b.label + " attacking: " + foes + " left" +
+      '<div class="sub">' + (ours ? ours + " defender" + (ours > 1 ? "s" : "") + " standing" : "No one to defend the settlement") +
+      (fires ? " · 🔥 " + fires + " fire" + (fires > 1 ? "s" : "") : "") + (activeViewName() !== "settlement" ? " · tap to watch" : "") + "</div>";
+    if (text !== lastBannerText) { el.innerHTML = text; lastBannerText = text; }
+    el.hidden = false;
   }
 
   // ---------------------------------------------------------------
@@ -209,6 +299,7 @@ const UI = (function () {
 
     // The living village: painted map and residents going about their day.
     const gridEl = document.getElementById("mapGrid");
+    if (typeof VillageView !== "undefined" && REALTIME) VillageView.useClock(gameClock, v => { monthT = v * E.MONTH_SECONDS; });
     if (typeof VillageView !== "undefined" && VillageView.mount(gridEl, state, mapZoom, label => {
       const c = document.getElementById("dayClock");
       if (c) c.textContent = label;
@@ -377,6 +468,9 @@ const UI = (function () {
       const pct = Math.round(100 * (1 - t.constructing.remaining / t.constructing.totalTime));
       html += '<div class="sub">' + pct + '% complete, ~' + Math.max(1, t.constructing.remaining) + ' month(s) left</div>';
       html += '<button class="btn danger small" id="cancelBuildBtn">Cancel &amp; Reclaim Materials</button>';
+    } else if (t.building && t.burnt) {
+      html += '<div class="sub" style="color:var(--blood-bright)">Burned in a raid. It does nothing (no homes, jobs or upkeep) until it is rebuilt.</div>';
+      html += '<button class="btn primary small" id="repairBtn">Rebuild (' + costString(E.repairCost(t)) + ')</button>';
     } else if (t.building) {
       const b = D.BUILDINGS[t.building];
       html += '<div class="sub">' + (b.ruin ? "A ruin from before the war. Restoring it will require materials." : describeBuildingEffect(b)) + '</div>';
@@ -427,6 +521,12 @@ const UI = (function () {
     html += '</div>';
     panel.innerHTML = html;
 
+    const repairBtn = document.getElementById("repairBtn");
+    if (repairBtn) repairBtn.addEventListener("click", () => {
+      const r = E.queueRepair(state, t.x, t.y);
+      if (!r.ok) toast(r.reason); else { toast("Rebuilding has begun."); E.saveGame(state); }
+      renderAll();
+    });
     const cancelBtn = document.getElementById("cancelBuildBtn");
     if (cancelBtn) cancelBtn.addEventListener("click", () => {
       E.cancelConstruction(state, t.x, t.y);
@@ -868,6 +968,7 @@ const UI = (function () {
       btn.addEventListener("click", () => {
         const res = E.resolveEvent(state, parseInt(btn.dataset.opt));
         if (!res.ok) { toast(res.reason); return; }
+        setTimeout(checkBattleStart, 0);
         root.innerHTML = "";
         E.saveGame(state);
         renderAll();

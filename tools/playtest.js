@@ -18,6 +18,8 @@ function playTurn(s){
   // rebalance jobs: keep enough farmers
   if (s.meta.turn % 6 === 0) for (const c of E.livingCitizens(s)) if (['lumberjack','mason','builder','herbalist','farmer','fisherman'].includes(c.job)) E.unassignJob(s,c.id);
   E.autoAssignIdle(s);
+  // rebuild anything burned, then keep the guard strong enough for raids
+  for (const t of s.grid) if (t.burnt && !t.constructing) E.queueRepair(s, t.x, t.y);
   if (building(s) < 2 + Math.floor(pop/30)) {
     const farmers = count(s,['farm','farm2','farm3']);
     const want = [];
@@ -37,6 +39,7 @@ function playTurn(s){
     if (short('market')) want.unshift(['u',['market','market2']], ['b','market']);
     if (short('faith')) want.unshift(['u',['wayshrine','chapel']], ['b','wayshrine']);
     if (short('health')) want.unshift(['u',['school','library']], ['b','school']);
+    if (s.flags.raidLostTurn !== undefined && s.meta.turn - s.flags.raidLostTurn < 12) want.unshift(['u',['guardhouse','barracks']], ['u',['keep']]);
     if (short('safety')) want.unshift(['u',['guardhouse','barracks']], ['b','guardhouse']);
     if (E.armedFraction(s) < 0.8 || E.toolCoverage(s) < 0.8) { if (!count(s,['workshop','workshop2'])) want.unshift(['b','workshop']); }
     if (!count(s,['school','library','academy'])) want.push(['b','school']);
