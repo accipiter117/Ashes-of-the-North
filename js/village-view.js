@@ -99,6 +99,8 @@ const VillageView = (function () {
   let clockFn = null;        // the game's own clock, when the UI runs real time
   let simNow = 0;            // seconds of village life (stands still while paused)
   let corpses = [];          // the fallen, where they fell
+  let travellers = [];       // passers-by on the road (cosmetic)
+  let nextTraveller = 4;
   let seenDeaths = {};       // battle id -> deaths already shown
   const ROOFED = ["house", "workshop", "brewhouse", "joinery", "guardhouse", "hall", "school"];
   function isRoofed(t) {
@@ -299,6 +301,14 @@ const VillageView = (function () {
     if (!list || !list.length) return null;
     return list[Math.floor(hash(p.seed * 1e6, salt || 7) * list.length) % list.length];
   }
+  // somewhere open to wander to: the road, a doorstep, the edge of a field
+  function strollSpot() {
+    const c = world.commons, r = rnd();
+    if (r < 0.35) return { x: 3.5 + rnd() * (W - 5), y: c.y - 0.35 + rnd() * 0.7 };            // along the road
+    const near = (world.by.built || []).filter(t => !isRoofed(t) || rnd() < 0.6);
+    if (r < 0.75 && near.length) { const t = near[Math.floor(rnd() * near.length)]; return { x: t.x + 0.2 + rnd() * 0.6, y: t.y + 0.9 + rnd() * 0.15 }; }
+    return { x: c.x + (rnd() - 0.5) * 6, y: c.y + (rnd() - 0.5) * 4 };
+  }
   // where to stand at a building: in front of a roofed one (or just inside its door)
   function yardSpot(t) { return { x: t.x + 0.2 + rnd() * 0.6, y: t.y + 0.72 + rnd() * 0.2 }; }
   const INDOOR_JOBS = ["administrator", "scribe", "tax_collector", "teacher", "physician", "alchemist", "brewer", "tanner"];
@@ -335,7 +345,11 @@ const VillageView = (function () {
       t = pick(by[r], p) || (r === "guardhouse" ? pick(by.keep, p) : null);
       pose = p.type === "soldier" ? "guard" : (p.type === "clerk" || p.type === "scholar") ? "sit" : "stand";
     }
-    if (!t) { const a = rnd() * Math.PI * 2, r = 0.6 + rnd() * 1.1; return { x: world.commons.x + Math.cos(a) * r * 1.3, y: world.commons.y + Math.sin(a) * r, pose: "sit" }; }
+    if (!t) {
+      // no work to go to: stroll about the place, stop to talk, warm up at the fire
+      if (rnd() < 0.15) { const a = rnd() * Math.PI * 2, r = 0.6 + rnd() * 0.8; return { x: world.commons.x + Math.cos(a) * r * 1.3, y: world.commons.y + Math.sin(a) * r, pose: "sit", roam: true }; }
+      return Object.assign(strollSpot(), { pose: "stand", roam: true });
+    }
     const s = isRoofed(t) ? yardSpot(t) : within(t);
     if (isRoofed(t) && INDOOR_JOBS.includes(j)) { s.x = t.x + 0.5; s.y = t.y + 0.78; s.inside = true; }
     s.pose = pose; s.tile = t;
@@ -369,7 +383,7 @@ const VillageView = (function () {
     if (act === "watch") { const i = Math.floor(rnd() * 4); const q = world.patrol[i]; return { x: q.x, y: q.y, pose: "walk", watch: i }; }
     if (act === "play") {
       const around = rnd() < 0.5 ? c : p.home;
-      return { x: around.x + (rnd() - 0.5) * 2.2, y: around.y + (rnd() - 0.5) * 1.6, pose: "walk" };
+      return { x: around.x + (rnd() - 0.5) * 3, y: around.y + (rnd() - 0.5) * 2, pose: "walk", roam: true };
     }
     // leisure: pray at the chapel, browse the market, draw water, or sit by the fire
     const by = world.by, roll = rnd();
@@ -413,7 +427,7 @@ const VillageView = (function () {
       // running from danger
       p.hurry = battleOn() ? 1.8 : 1;
       goTo(p, destFor(p, want));
-      p.nextShuffle = now + 6 + rnd() * 10;
+      p.nextShuffle = now + ((p.dest && p.dest.roam) ? 1 + rnd() * 3 : 4 + rnd() * 8);
     }
     if (p.path.length) {
       const q = p.path[0];
@@ -437,7 +451,7 @@ const VillageView = (function () {
     if (p.carry && (p.act === "meal" || p.act === "leisure")) p.carry = null;
     // move on now and then: the next row of crops, another tree, the next corner of the watch
     if (now > p.nextShuffle && (p.act === "work" || p.act === "play" || p.act === "watch" || (p.act === "leisure" && rnd() < 0.3))) {
-      p.nextShuffle = now + (p.act === "watch" ? 0 : 5 + rnd() * 12);
+      p.nextShuffle = now + (p.act === "watch" ? 0 : (p.dest && p.dest.roam) ? 1 + rnd() * 3 : 4 + rnd() * 8);
       if (p.act === "watch") {
         const i = ((p.dest.watch || 0) + 1) % 4;
         const q = world.patrol[i];
@@ -1064,7 +1078,7 @@ const VillageView = (function () {
   function drawPawnBody(c, p, now) {
     const sc = p.child ? 0.72 : 1;
     const walking = p.moving;
-    const bob = walking ? Math.abs(Math.sin((now + p.anim) * 11)) * 0.022 : 0;
+    const bob = walking ? Math.abs(Math.sin((now + p.anim) * 11)) * 0.022 : Math.sin((now + p.anim) * 2.2) * 0.006;
     const pose = p.moving ? "walk" : (p.dest && p.dest.pose) || "stand";
     const working = !p.moving && p.act === "work";
     const crouch = (pose === "crouch" || pose === "sit") && !p.moving ? 0.03 : 0;
@@ -1123,6 +1137,97 @@ const VillageView = (function () {
     }
   }
 
+
+  // ---------------------------------------------------------------
+  // TRAVELLERS: merchants' carts, pilgrims, refugees, pedlars and now and then
+  // a witcher on horseback come in along the east road by day, stop at the
+  // market or the fire, and go on their way. Purely for life on the map.
+  // ---------------------------------------------------------------
+  const TRAVELLER_KINDS = [
+    { kind: "cart", w: 3, speed: 0.75, n: 1 },
+    { kind: "pilgrims", w: 2, speed: 0.7, n: 2 },
+    { kind: "refugees", w: 2, speed: 0.6, n: 3 },
+    { kind: "pedlar", w: 3, speed: 1.0, n: 1 },
+    { kind: "witcher", w: 0.6, speed: 1.4, n: 1 }
+  ];
+  function roadY() { const r = game.grid.find(t => t.terrain === "road"); return r ? r.y + 0.5 : world.commons.y; }
+  function updateTravellers(dt, phase) {
+    if (dt <= 0) return;
+    nextTraveller -= dt;
+    const day = phase > 0.25 && phase < 0.82;
+    if (day && nextTraveller <= 0 && travellers.length < 4 && !battleOn()) {
+      nextTraveller = 8 + rnd() * 14;
+      const total = TRAVELLER_KINDS.reduce((a, k) => a + k.w, 0);
+      let r = rnd() * total, def = TRAVELLER_KINDS[0];
+      for (const k of TRAVELLER_KINDS) { if ((r -= k.w) <= 0) { def = k; break; } }
+      const y = roadY() + (rnd() - 0.5) * 0.3;
+      const market = (world.by.market || [])[0];
+      const stop = def.kind === "witcher" || def.kind === "pilgrims" ? { x: world.commons.x + 0.8, y: y } :
+        market ? { x: market.x + 0.5, y: Math.min(market.y + 1.05, y) } : { x: world.commons.x + 1.2, y: y };
+      const t = { kind: def.kind, n: def.n, speed: def.speed, x: W + 0.6, y, facing: -1, stop, stage: "in", wait: 4 + rnd() * 8, look: rnd() };
+      if (def.kind === "refugees" && rnd() < 0.5) { t.stop = { x: 3.6, y }; }
+      travellers.push(t);
+    }
+    for (let i = travellers.length - 1; i >= 0; i--) {
+      const t = travellers[i];
+      if (battleOn() && t.stage !== "out") { t.stage = "out"; t.speed *= 1.6; }
+      if (t.stage === "wait") { t.wait -= dt; if (t.wait <= 0) t.stage = "out"; continue; }
+      const goal = t.stage === "in" ? t.stop : { x: W + 0.8, y: t.y };
+      const dx = goal.x - t.x, dy = goal.y - t.y, d = Math.hypot(dx, dy);
+      const step = t.speed * dt;
+      t.facing = dx < 0 ? -1 : 1;
+      if (d <= step) { t.x = goal.x; t.y = goal.y; if (t.stage === "in") t.stage = "wait"; else { travellers.splice(i, 1); } }
+      else { t.x += dx / d * step; t.y += dy / d * step; }
+      t.moving = t.stage !== "wait";
+    }
+  }
+  function walker(c, x, y, now, shirt, hood, extra) {
+    const bob = Math.abs(Math.sin(now * 10 + x * 3)) * 0.02;
+    c.save(); c.translate(x, y - bob); c.scale(PAWN_SCALE, PAWN_SCALE);
+    c.fillStyle = "rgba(0,0,0,0.3)"; c.beginPath(); c.ellipse(0, 0.07 + bob, 0.09, 0.04, 0, 0, 7); c.fill();
+    c.fillStyle = shirt; c.strokeStyle = INK; c.lineWidth = 0.018;
+    c.beginPath(); c.ellipse(0, 0.02, 0.085, 0.07, 0, 0, 7); c.fill(); c.stroke();
+    c.fillStyle = "#e2b48e"; c.beginPath(); c.arc(0, -0.075, 0.055, 0, 7); c.fill(); c.stroke();
+    if (hood) { c.fillStyle = hood; c.beginPath(); c.arc(0, -0.08, 0.06, Math.PI * 0.95, Math.PI * 2.05); c.fill(); }
+    if (extra) extra(c);
+    c.restore();
+  }
+  function horse(c, x, y, f, now, colour) {
+    const bob = Math.abs(Math.sin(now * 8 + x)) * 0.015;
+    c.fillStyle = "rgba(0,0,0,0.3)"; c.beginPath(); c.ellipse(x, y + 0.08, 0.24, 0.07, 0, 0, 7); c.fill();
+    c.fillStyle = colour; c.strokeStyle = INK; c.lineWidth = 0.018;
+    c.beginPath(); c.ellipse(x, y - bob, 0.2, 0.08, 0, 0, 7); c.fill(); c.stroke();
+    c.beginPath(); c.ellipse(x + f * 0.22, y - 0.04 - bob, 0.08, 0.045, f * -0.4, 0, 7); c.fill(); c.stroke();
+    c.fillStyle = "#2a1c10"; c.fillRect(x - f * 0.22, y - 0.02 - bob, f * -0.06, 0.03);
+  }
+  function drawTraveller(c, t, now) {
+    const f = t.facing, m = t.moving ? now : 0;
+    if (t.kind === "cart") {
+      horse(c, t.x + f * 0.32, t.y, f, m, "#7a5232");
+      const cx = t.x - f * 0.15;
+      c.fillStyle = "rgba(0,0,0,0.3)"; c.fillRect(cx - 0.24, t.y - 0.12, 0.5, 0.28);
+      box(c, cx - 0.22, t.y - 0.16, 0.44, 0.24, PLANK);
+      crate(c, cx - 0.18, t.y - 0.13, 0.1); crate(c, cx - 0.05, t.y - 0.13, 0.1);
+      c.fillStyle = "#c8b080"; c.beginPath(); c.ellipse(cx + 0.12, t.y - 0.06, 0.06, 0.05, 0, 0, 7); c.fill();
+      for (const wx of [-0.14, 0.14]) circle(c, cx + wx, t.y + 0.1, 0.05, "#3a2a1a");
+      walker(c, t.x + f * 0.05, t.y - 0.02, m, "#3f5f8a", null);
+    } else if (t.kind === "witcher") {
+      horse(c, t.x, t.y, f, m, "#3a2e26");
+      walker(c, t.x - f * 0.02, t.y - 0.08, m, "#2a2a2e", null, (g) => {
+        g.fillStyle = "#e8e8e8"; g.beginPath(); g.arc(0, -0.09, 0.05, Math.PI, 0); g.fill();
+        g.strokeStyle = "#b8b8c0"; g.lineWidth = 0.016; g.beginPath(); g.moveTo(-0.07, -0.02); g.lineTo(0.05, -0.2); g.moveTo(-0.04, -0.02); g.lineTo(0.08, -0.19); g.stroke();
+      });
+    } else {
+      const shirts = t.kind === "pilgrims" ? ["#8a8478", "#7a7468"] : t.kind === "refugees" ? ["#6a5a48", "#7a6a50", "#5a5040"] : ["#6a4a2a"];
+      for (let i = 0; i < t.n; i++) {
+        const ox = -f * i * 0.26, oy = (i % 2) * 0.12 - 0.06;
+        walker(c, t.x + ox, t.y + oy, m + i, shirts[i % shirts.length], t.kind === "pilgrims" ? "#5a5448" : null, (g) => {
+          if (t.kind === "pedlar" || t.kind === "refugees") { g.fillStyle = "#9a8058"; g.beginPath(); g.arc(-f * 0.06, -0.01, 0.05, 0, 7); g.fill(); g.strokeStyle = INK; g.lineWidth = 0.012; g.stroke(); }
+          if (t.kind === "pilgrims") { g.strokeStyle = "#6a4a2a"; g.lineWidth = 0.016; g.beginPath(); g.moveTo(f * 0.08, 0.06); g.lineTo(f * 0.08, -0.2); g.stroke(); }
+        });
+      }
+    }
+  }
 
   // ---------------------------------------------------------------
   // BATTLES
@@ -1363,6 +1468,7 @@ const VillageView = (function () {
     simNow += simDt;
     noteDeaths();
     for (const p of pawns.values()) updatePawn(p, simDt, simNow);
+    updateTravellers(simDt, clock);
     if (simDt > 0) emitSmoke(simNow, simDt);
     draw(simDt, now);
     const label = clockLabel(clock);
@@ -1378,6 +1484,7 @@ const VillageView = (function () {
     drawFire(c, now);
     drawCorpses(c);
     const items = Array.from(pawns.values()).filter(p => p.visible).map(p => ({ y: p.y, draw: () => drawPawn(c, p, now) }));
+    for (const t of travellers) items.push({ y: t.y, draw: () => drawTraveller(c, t, now) });
     if (battleOn()) addBattleDrawables(c, items, now);
     items.sort((a, b) => a.y - b.y);
     for (const it of items) it.draw();
@@ -1439,24 +1546,17 @@ const VillageView = (function () {
     game = state; tile = tileSize; onClockLabel = labelCallback || null; lastLabel = "";
     gridEl.insertBefore(canvas, gridEl.firstChild);
     refresh();
-    if (reducedMotion) {
-      // one still frame by day, everyone at their posts
-      clock = 0.4;
-      for (const p of pawns.values()) { const s = destFor(p, "work"); p.x = s.x; p.y = s.y; p.act = "work"; p.dest = s; p.path = []; p.visible = true; }
-      draw(0, 0);
-      if (onClockLabel) onClockLabel(clockLabel(clock));
-      return true;
-    }
+    // The village always moves: the game is played by watching it. (Reduce Motion
+    // on a phone used to freeze it into a still picture, which read as broken.)
     start();
     return true;
   }
   function setTileSize(tileSize) {
     if (!canvas || !game || tileSize === tile) return;
     tile = tileSize; refresh();
-    if (reducedMotion) draw(0, 0);
   }
   function start() {
-    if (rafId || reducedMotion || !canvas) return;
+    if (rafId || !canvas) return;
     lastTick = 0;
     rafId = requestAnimationFrame(frame);
   }
@@ -1485,7 +1585,10 @@ const VillageView = (function () {
   let clockSet = null;
   function useClock(fn, setFn) { clockFn = fn; clockSet = setFn || null; }
 
-  return { supported, mount, setTileSize, start, personAt, setClock, centre, useClock };
+  // For tests: where everyone is.
+  function peek() { return { pawns: Array.from(pawns.values()).map(p => ({ id: p.id, x: p.x, y: p.y, visible: p.visible, act: p.act, moving: !!p.moving, pose: p.dest && p.dest.pose, path: p.path.length })), travellers: travellers.length }; }
+
+  return { supported, mount, setTileSize, start, personAt, setClock, centre, useClock, peek };
 })();
 
 if (typeof window !== "undefined") window.VillageView = VillageView;

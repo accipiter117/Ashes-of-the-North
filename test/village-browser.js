@@ -99,6 +99,26 @@ server.listen(0, async () => {
     await page.waitForTimeout(400);
     check(await page.isHidden("#battleBanner"), "the banner goes once the battle is over");
 
+    // people really walk about, even with the phone's Reduce Motion setting on
+    const ctx2 = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: "reduce" });
+    const page2 = await ctx2.newPage();
+    await page2.route(/fonts\.(googleapis|gstatic)\.com/, r => r.abort());
+    await page2.goto(url);
+    await page2.evaluate(() => localStorage.clear());
+    await page2.reload();
+    await page2.click("#newGameBtn2");
+    await page2.evaluate(() => VillageView.setClock(0.35));
+    await page2.waitForTimeout(2500);
+    const before = await page2.evaluate(() => VillageView.peek());
+    await page2.waitForTimeout(3000);
+    const after = await page2.evaluate(() => VillageView.peek());
+    const moved = after.pawns.filter(q => { const o = before.pawns.find(r => r.id === q.id); return o && Math.hypot(q.x - o.x, q.y - o.y) > 0.5; }).length;
+    check(moved >= 8, "with Reduce Motion on, people still walk about (" + moved + " of " + after.pawns.length + " moved in 3s)");
+    await page2.waitForTimeout(8000);
+    check((await page2.evaluate(() => VillageView.peek().travellers)) > 0, "travellers come along the road by day");
+    check(await page2.isHidden(".map-toolbar") && await page2.isVisible("#zoomInBtn"), "no toolbar above the map; zoom floats on it");
+    await ctx2.close();
+
     check(errors.length === 0, "no page errors" + (errors.length ? ": " + errors.join(" | ") : ""));
   } catch (e) {
     console.error(e); failed = true;

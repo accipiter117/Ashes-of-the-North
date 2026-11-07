@@ -373,7 +373,7 @@ select.job-select {
 
   /* The map gets the lion's share of the reclaimed vertical space — this is the
      screen that benefits most from landscape's extra width. */
-  #mapWrap { height: min(78vh, 560px); }
+  #mapFrame #mapWrap { height: calc(100dvh - 120px); min-height: 220px; }
 }
 
 /* ---------- NEEDS, MOOD AND INTEREST GROUPS ---------- */
@@ -390,3 +390,20 @@ select.job-select {
 .trend.up { color: #8fbf5a; }
 .trend.down { color: var(--blood-bright); }
 .tag.warn { color: #e0b050; border-color: #8a6a2a; }
+
+/* ---------- FULL-SCREEN MAP ---------- */
+/* The map fills the screen between the resource bar and the nav; zoom buttons and
+   the time of day float on it instead of taking a toolbar's worth of space. */
+#mapFrame { position: relative; margin: -4px -4px 8px; }
+#mapFrame #mapWrap { height: calc(100vh - 175px); height: calc(100dvh - 175px); min-height: 300px; padding: 0; border-radius: 10px; }
+.map-overlay { position: absolute; left: 8px; top: 8px; z-index: 5; display: flex; flex-direction: column; gap: 6px; }
+.map-overlay .zoom-btn {
+  width: 34px; height: 34px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.15); cursor: pointer;
+  background: rgba(15,13,10,0.72); color: var(--ink); font-size: 18px; line-height: 1; display: flex; align-items: center; justify-content: center;
+}
+.map-overlay .zoom-btn:active { background: rgba(40,34,26,0.9); }
+.map-clock {
+  position: absolute; right: 8px; top: 8px; z-index: 5; pointer-events: none;
+  padding: 4px 9px; border-radius: 10px; background: rgba(15,13,10,0.72); color: var(--ink-dim); font-size: 11.5px;
+}
+.map-clock:empty { display: none; }
