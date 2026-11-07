@@ -32,6 +32,10 @@ saving works reliably once served over `http://` or `https://`, including GitHub
 2. In the repository's **Settings → Pages**, set the source to the branch/folder you used.
 3. GitHub will publish it at `https://<your-username>.github.io/<repo-name>/`.
 
+The script and style links in `index.html` carry a version tag (`?v=...`). Change it whenever
+you publish, so phones fetch the new files at once instead of using cached copies for up to
+ten minutes.
+
 All asset paths are relative (`css/style.css`, `js/*.js`), so it works whether the site
 is served from a domain root or a repo subpath. There is no backend, database, or paid
 API — everything runs client-side, and progress is saved to the browser's `localStorage`.
