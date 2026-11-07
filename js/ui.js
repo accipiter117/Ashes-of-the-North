@@ -8,8 +8,8 @@ const UI = (function () {
   let state = null;
   let selectedTile = null;
   let citizenFilter = "idle"; // idle | all | important
-  let mapZoom = 30; // px per tile — see ZOOM_MIN/MAX/STEP below
-  const ZOOM_MIN = 16, ZOOM_MAX = 56, ZOOM_STEP = 6;
+  let mapZoom = 40; // px per tile — see ZOOM_MIN/MAX/STEP below
+  const ZOOM_DEFAULT = 40, ZOOM_MIN = 20, ZOOM_MAX = 80, ZOOM_STEP = 10;
 
   function init(s) {
     state = s;
@@ -103,7 +103,7 @@ const UI = (function () {
 
   function renderResourceBar() {
     const bar = document.getElementById("resourceBar");
-    const order = ["food","wood","stone","iron","coin","herbs","tools","weapons","knowledge","influence","stability","reputation"];
+    const order = ["food","wood","stone","iron","coin","herbs","tools","weapons","ale","furniture","knowledge","influence","stability","reputation"];
     bar.innerHTML = order.map(r => {
       const info = D.RESOURCE_INFO[r];
       const val = state.resources[r] || 0;
@@ -121,7 +121,7 @@ const UI = (function () {
   function terrainIcon(t) {
     if (t.building) {
       const b = D.BUILDINGS[t.building];
-      if (b.ruin) return "⛔";
+      if (b.ruin) return "🏚";
       if (b.effect && b.effect.housing) return "🏠";
       if (t.building.startsWith("farm")) return "🌾";
       if (t.building === "dock") return "🎣";
@@ -146,11 +146,27 @@ const UI = (function () {
     return "";
   }
 
+  // Keeps whatever was in the middle of the view in the middle after zooming
+  // (the map used to jump back to its top-left corner).
+  let appliedZoom = null;
   function applyZoom() {
+    const wrap = document.getElementById("mapWrap");
+    const before = appliedZoom;
+    let cx = null, cy = null;
+    if (wrap && before && before !== mapZoom) {
+      cx = (wrap.scrollLeft + wrap.clientWidth / 2) / before;
+      cy = (wrap.scrollTop + wrap.clientHeight / 2) / before;
+    }
+    appliedZoom = mapZoom;
     const gridEl = document.getElementById("mapGrid");
     if (gridEl) gridEl.style.setProperty("--tile-size", mapZoom + "px");
     const lvl = document.getElementById("zoomLevel");
-    if (lvl) lvl.textContent = Math.round((mapZoom / 30) * 100) + "%";
+    if (lvl) lvl.textContent = Math.round((mapZoom / ZOOM_DEFAULT) * 100) + "%";
+    if (typeof VillageView !== "undefined") VillageView.setTileSize(mapZoom);
+    if (wrap && cx !== null) {
+      wrap.scrollLeft = Math.max(0, cx * mapZoom - wrap.clientWidth / 2);
+      wrap.scrollTop = Math.max(0, cy * mapZoom - wrap.clientHeight / 2);
+    }
   }
 
   function renderSettlement() {
@@ -179,19 +195,31 @@ const UI = (function () {
       '<span class="zoom-level" id="zoomLevel">100%</span>' +
       '<button class="zoom-btn" id="zoomInBtn" title="Zoom in">+</button>' +
       '<button class="zoom-btn" id="zoomFitBtn" title="Reset zoom" style="width:auto;padding:0 10px;font-size:11px">Reset</button>' +
-      '<span class="zoom-hint">Pinch or use +/− · swipe to pan</span>' +
+      '<span class="zoom-hint" id="dayClock">Pinch or use +/− · swipe to pan</span>' +
       '</div>';
 
     el.innerHTML =
-      '<h2 class="section-title">' + state.settlementName + ' — ' + D.STAGES.find(s => s.id === state.meta.stage).name + '</h2>' +
-      '<p class="hint">Tap a tile to inspect it, construct a new building, or upgrade what stands there. Dashed tiles are ruins from before the war.</p>' +
+      '<h2 class="section-title">' + state.settlementName + ': ' + D.STAGES.find(s => s.id === state.meta.stage).name + '</h2>' +
+      '<p class="hint">Tap a tile to inspect it, construct a new building, or upgrade what stands there. Tap a resident to see who they are. The broken stone buildings are ruins from before the war.</p>' +
       toolbar +
       grid +
       '<div id="tilePanel"></div>' +
+      renderNeedsCard() +
       renderMilitarySummaryCard();
 
+    // The living village: painted map and residents going about their day.
+    const gridEl = document.getElementById("mapGrid");
+    if (typeof VillageView !== "undefined" && VillageView.mount(gridEl, state, mapZoom, label => {
+      const c = document.getElementById("dayClock");
+      if (c) c.textContent = label;
+    })) gridEl.classList.add("painted");
+
     el.querySelectorAll(".tile").forEach(elm => {
-      elm.addEventListener("click", () => {
+      elm.addEventListener("click", (ev) => {
+        if (typeof VillageView !== "undefined" && gridEl.classList.contains("painted")) {
+          const who = VillageView.personAt(parseInt(elm.dataset.x) + ev.offsetX / mapZoom, parseInt(elm.dataset.y) + ev.offsetY / mapZoom);
+          if (who) toast(who.name + ", " + who.job.toLowerCase() + (who.doing ? ", " + who.doing : ""));
+        }
         const prevSelected = el.querySelector(".tile.selected");
         if (prevSelected) prevSelected.classList.remove("selected");
         elm.classList.add("selected");
@@ -209,7 +237,7 @@ const UI = (function () {
       applyZoom();
     });
     document.getElementById("zoomFitBtn").addEventListener("click", () => {
-      mapZoom = 30; // default tile size
+      mapZoom = ZOOM_DEFAULT;
       applyZoom();
     });
 
@@ -240,13 +268,68 @@ const UI = (function () {
 
     applyZoom();
     const newWrap = document.getElementById("mapWrap");
-    if (newWrap) { newWrap.scrollLeft = prevScrollLeft; newWrap.scrollTop = prevScrollTop; }
+    if (newWrap && !prevWrap && typeof VillageView !== "undefined" && VillageView.centre()) {
+      // first look at the map: open on the village, not the empty river bank
+      const c = VillageView.centre();
+      newWrap.scrollLeft = Math.max(0, c.x * mapZoom - newWrap.clientWidth / 2);
+      newWrap.scrollTop = Math.max(0, c.y * mapZoom - newWrap.clientHeight / 2);
+    } else if (newWrap) { newWrap.scrollLeft = prevScrollLeft; newWrap.scrollTop = prevScrollTop; }
     if (selectedTile) renderTilePanel();
   }
   function clampZoom(v) { return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, v)); }
   function touchDistance(t0, t1) {
     const dx = t0.clientX - t1.clientX, dy = t0.clientY - t1.clientY;
     return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  // ---------------------------------------------------------------
+  // NEEDS & MOOD
+  // ---------------------------------------------------------------
+  function moodWord(h) {
+    if (h >= 0.75) return { word: "Content", cls: "good", face: "😊" };
+    if (h >= 0.55) return { word: "Settled", cls: "", face: "🙂" };
+    if (h >= 0.4) return { word: "Restless", cls: "warn", face: "😐" };
+    return { word: "Miserable", cls: "bad", face: "😠" };
+  }
+  function meter(level, cls) {
+    const pct = Math.round(Math.max(0, Math.min(1, level)) * 100);
+    const tone = cls || (pct >= 75 ? "good" : pct >= 40 ? "warn" : "bad");
+    return '<span class="meter ' + tone + '"><span style="width:' + pct + '%"></span></span>';
+  }
+  function renderNeedsCard() {
+    const rep = E.needsReport(state);
+    const mood = moodWord(rep.happiness);
+    const active = rep.needs.filter(n => n.active), soon = rep.needs.filter(n => n.soon);
+    const pace = rep.pace;
+    let html = '<div class="card"><h3>Needs &amp; Mood</h3>' +
+      '<div class="row"><span>' + mood.face + ' The people are <strong>' + mood.word.toLowerCase() + '</strong></span><span>' + Math.round(rep.happiness * 100) + '%</span></div>' +
+      '<div class="sub" style="margin-top:-2px">Work pace ×' + pace.toFixed(2) + '. Happy towns work harder, have more children and draw newcomers; miserable ones lose families to the road.</div>';
+    for (const n of active) {
+      html += '<div class="row need-row" title="' + n.desc + '"><span>' + n.icon + ' ' + n.name + '</span><span class="need-val">' + meter(n.level) + ' ' + Math.round(n.level * 100) + '%</span></div>' +
+        (n.level < 0.6 ? '<div class="sub need-hint">' + n.desc + '</div>' : '');
+    }
+    if (soon.length) {
+      html += '<div class="sub" style="margin-top:6px">Once a ' + soon[0].from.toLowerCase() + ', households will also expect: ' + soon.map(n => n.icon + ' ' + n.name.toLowerCase()).join(", ") + '.</div>';
+    }
+    return html + '</div>';
+  }
+
+  function renderVoicesCard() {
+    const groups = E.groupReport(state);
+    let html = '<div class="card"><h3>Voices of the Town</h3><p class="sub">Each group judges you by how its people live, what it particularly wants, and your edicts. Those who approve work harder; under 25, they petition.</p>';
+    for (const g of groups) {
+      const trend = g.trend > 0 ? ' <span class="trend up">▲</span>' : g.trend < 0 ? ' <span class="trend down">▼</span>' : '';
+      const lines = [];
+      if (g.grievance) lines.push('Most wanted now: ' + g.grievance + '.');
+      else if (g.pleasedBy) lines.push('Pleased with ' + g.pleasedBy + '.');
+      if (g.edictsHated.length) lines.push('Resents ' + g.edictsHated.join(", ") + '.');
+      if (g.edictsLiked.length) lines.push('Welcomes ' + g.edictsLiked.join(", ") + '.');
+      html += '<div class="group-row">' +
+        '<div class="row" style="margin:0"><span>' + g.icon + ' <strong>' + g.name + '</strong>' + (g.members ? ' <span class="sub">(' + g.members + ')</span>' : '') + '</span>' +
+        '<span class="need-val">' + meter(g.approval / 100) + ' ' + Math.round(g.approval) + trend + '</span></div>' +
+        '<div class="sub">' + g.wants + '. ' + lines.join(" ") + (g.members ? ' Working at ×' + g.workMult.toFixed(2) + '.' : '') + '</div></div>';
+    }
+    return html + '</div>';
   }
 
   function renderMilitarySummaryCard() {
@@ -262,12 +345,14 @@ const UI = (function () {
         (overcrowded ? ' <span class="tag bad">overcrowded</span>' : '') + '</span></div>' +
       (overcrowded ? '<div class="sub" style="color:var(--blood-bright);margin-top:-2px">Growth slows until more housing is built.</div>' : '') +
       '<div class="row"><span>Military Strength</span><span>' + str + '</span></div>' +
+      '<div class="row"><span>Soldiers armed</span><span>' + Math.round(E.armedFraction(state) * 100) + '%' + (E.armedFraction(state) < 1 ? ' <span class="tag bad">unarmed fight at half strength</span>' : '') + '</span></div>' +
+      '<div class="row"><span>Tools to hand</span><span>' + Math.round(E.toolCoverage(state) * 100) + '%' + (E.toolCoverage(state) < 0.75 ? ' <span class="tag bad">work slowed</span>' : '') + '</span></div>' +
       '<div class="row"><span>Defense</span><span>' + cap.defense.toFixed(0) + '</span></div>' +
       '<div class="row"><span>Upkeep</span><span>' + upkeep.toFixed(1) + ' coin/mo' +
         (upkeepShortfall ? ' <span class="tag bad">short</span>' : '') + '</span></div>' +
-      (upkeepShortfall ? '<div class="sub" style="color:var(--blood-bright);margin-top:-2px">The treasury can\'t cover upkeep — stability is taking the cost.</div>' : '') +
+      (upkeepShortfall ? '<div class="sub" style="color:var(--blood-bright);margin-top:-2px">The treasury can\'t cover upkeep, so stability is taking the cost.</div>' : '') +
       '<div class="row"><span>Storage before spoilage</span><span>' + softCap + '</span></div>' +
-      '<div class="sub" style="margin-top:-2px">Coin, tools, weapons, knowledge, and influence above this waste away each month — a reason to spend, not just hoard.</div>' +
+      '<div class="sub" style="margin-top:-2px">Coin, tools, weapons, knowledge, and influence above this waste away each month (a reason to spend, not just hoard).</div>' +
       '<div class="row"><span>Legacy Score</span><span>' + E.legacyScore(state) + '</span></div></div>';
   }
 
@@ -285,7 +370,7 @@ const UI = (function () {
     } else {
       headerTitle = terrainLabel + " (empty)";
     }
-    let html = '<div class="card"><h3>' + headerTitle + '</h3><div class="sub">Tile (' + t.x + ', ' + t.y + ') — ' + terrainLabel + ' ground</div>';
+    let html = '<div class="card"><h3>' + headerTitle + '</h3><div class="sub">Tile (' + t.x + ', ' + t.y + '): ' + terrainLabel + ' ground</div>';
 
     if (t.constructing) {
       const b = D.BUILDINGS[t.constructing.buildingId];
@@ -333,7 +418,7 @@ const UI = (function () {
           const b = D.BUILDINGS[id];
           const preview = E.previewAdjacency(state, t.x, t.y, id);
           html += '<button class="btn block small" style="margin-bottom:6px;text-align:left" data-build="' + id + '">' +
-            b.name + ' — ' + costString(b.cost) + ' (' + b.buildTime + ' mo)' +
+            b.name + ': ' + costString(b.cost) + ' (' + b.buildTime + ' mo)' +
             (preview ? '<br><span style="color:var(--moss);font-size:11px">+ ' + preview.matched.join(", ") + '</span>' : '') +
             '</button>';
         }
@@ -357,7 +442,7 @@ const UI = (function () {
     if (demolishBtn) demolishBtn.addEventListener("click", () => {
       if (!confirm("Demolish this building? You'll reclaim some materials, but its tier progress is lost.")) return;
       const r = E.demolishBuilding(state, t.x, t.y);
-      if (!r.ok) toast(r.reason); else toast("Building cleared — the tile is free again.");
+      if (!r.ok) toast(r.reason); else toast("Building cleared. The tile is free again.");
       renderAll();
     });
     panel.querySelectorAll("[data-build]").forEach(btn => {
@@ -401,7 +486,7 @@ const UI = (function () {
 
     el.innerHTML =
       '<h2 class="section-title">People of ' + state.settlementName + '</h2>' +
-      '<p class="hint">Population ' + all.length + '. Assign idle residents to jobs — open slots depend on what has been built.</p>' +
+      '<p class="hint">Population ' + all.length + '. Assign idle residents to jobs. Open slots depend on what has been built.</p>' +
       '<div class="row" style="margin-bottom:10px;gap:6px">' +
         '<button class="btn small' + (citizenFilter === "idle" ? " primary" : "") + '" data-filter="idle">Idle</button>' +
         '<button class="btn small' + (citizenFilter === "important" ? " primary" : "") + '" data-filter="important">Notable</button>' +
@@ -431,7 +516,7 @@ const UI = (function () {
   // current job from the "full" capacity count so they always see their own job as
   // selectable (otherwise anyone in a fully-staffed job would see it wrongly disabled).
   function buildJobOptionsHtml(currentCitizen) {
-    let html = '<option value=""' + (!currentCitizen.job ? " selected" : "") + '>— Idle —</option>';
+    let html = '<option value=""' + (!currentCitizen.job ? " selected" : "") + '>Idle</option>';
     for (const typeId in D.WORKER_TYPES) {
       html += '<optgroup label="' + D.WORKER_TYPES[typeId].name + '">';
       for (const jobId of D.WORKER_TYPES[typeId].jobs) {
@@ -441,7 +526,7 @@ const UI = (function () {
         const full = max !== 999 && used >= max;
         html += '<option value="' + jobId + '"' + (full && !isCurrent ? ' disabled' : '') + (isCurrent ? ' selected' : '') + '>' +
           D.JOBS[jobId].name + (max === 999 ? "" : " (" + Math.min(used + 1, max) + "/" + max + ")") +
-          (full && !isCurrent ? " — full" : "") + '</option>';
+          (full && !isCurrent ? " (full)" : "") + '</option>';
       }
       html += '</optgroup>';
     }
@@ -470,7 +555,7 @@ const UI = (function () {
     }
     return '<div class="citizen-row">' +
       '<div><div class="citizen-name">' + (c.important ? '<span class="important-star">★</span>' : '') + c.name + '</div>' +
-      '<div class="citizen-meta">Age ' + c.age + (traitNames ? " · " + traitNames : "") + (c.age < 12 ? " · child" : "") + '</div>' +
+      '<div class="citizen-meta">' + moodWord((c.happiness === undefined ? 60 : c.happiness) / 100).face + ' Age ' + c.age + (traitNames ? " · " + traitNames : "") + (c.age < 12 ? " · child" : "") + '</div>' +
       familyLine +
       '</div>' +
       (c.age < 12
@@ -493,7 +578,7 @@ const UI = (function () {
     const el = document.getElementById("view-build");
     const queue = state.grid.filter(t => t.constructing);
     let html = '<h2 class="section-title">Construction</h2>' +
-      '<p class="hint">New buildings and upgrades are placed from the Settlement map — select an empty or existing tile there. This page tracks progress and overall development.</p>';
+      '<p class="hint">New buildings and upgrades are placed from the Settlement map: select an empty or existing tile there. This page tracks progress and overall development.</p>';
 
     html += '<div class="card"><h3>Active Construction (' + queue.length + ')</h3>';
     if (queue.length === 0) {
@@ -513,7 +598,7 @@ const UI = (function () {
       const bestTier = built.reduce((m, t) => Math.max(m, D.BUILDINGS[t.building].tier), -1);
       const name = D.BUILDINGS[chain[Math.max(bestTier, 0)]].name;
       html += '<div class="row"><span>' + D.BUILDINGS[chain[0]].name.replace("Ruined ", "") + '</span>' +
-        '<span>' + (built.length ? built.length + '× — best: ' + name : '<span class="tag">none built</span>') + '</span></div>';
+        '<span>' + (built.length ? built.length + '× (best: ' + name + ')' : '<span class="tag">none built</span>') + '</span></div>';
     }
     html += '</div>';
     el.innerHTML = html;
@@ -536,7 +621,7 @@ const UI = (function () {
       const allianceCost = E.factionActionCost(state, f.id, "form_alliance");
       html += '<div class="card">' +
         '<div class="faction-header"><h3>' + f.name + '</h3><span class="tag">' + f.type + '</span></div>' +
-        '<div class="sub">' + f.desc + ' — led by ' + f.leader + '</div>' +
+        '<div class="sub">' + f.desc + ' Led by ' + f.leader + '.' + '</div>' +
         '<div class="rel-bar"><div class="rel-bar-fill" style="width:' + pct + '%"></div><div class="rel-bar-mid"></div></div>' +
         '<div class="sub">Relationship ' + Math.round(f.relationship) + ' · Trust ' + Math.round(f.trust) +
           (f.tradeAgreement ? ' · <span class="tag good">Trade Agreement</span>' : '') +
@@ -544,7 +629,7 @@ const UI = (function () {
         (f.allied ? '' :
           '<button class="btn' + (allianceEligible ? ' primary' : '') + ' block small" style="margin-top:8px" data-faction="' + f.id + '" data-action="form_alliance"' + (allianceEligible ? '' : ' disabled') + '>' +
             'Propose Formal Alliance (' + costString(allianceCost) + ')' +
-            (allianceEligible ? '' : ' — needs ' + allianceAction.requiresRelationship + '+ relationship & ' + allianceAction.requiresTrust + '+ trust') +
+            (allianceEligible ? '' : ' (needs ' + allianceAction.requiresRelationship + '+ relationship & ' + allianceAction.requiresTrust + '+ trust)') +
           '</button>') +
         '<div class="grid2" style="margin-top:8px">' +
         regularActions.map(a => {
@@ -598,7 +683,7 @@ const UI = (function () {
       const label = relationLabel(p.val);
       return '<div class="row"><span>' + p.a + ' ↔ ' + p.b + '</span><span class="tag ' + label.cls + '">' + label.text + '</span></div>';
     }).join("");
-    return '<div class="card"><h3>Regional Relations</h3><p class="sub">How the region\'s factions see each other — this shifts on its own, separate from your own standing with each.</p>' + rows + '</div>';
+    return '<div class="card"><h3>Regional Relations</h3><p class="sub">How the region\'s factions see each other. This shifts on its own, separate from your own standing with each.</p>' + rows + '</div>';
   }
   function clamp01(v) { return Math.max(0, Math.min(1, v)); }
 
@@ -642,6 +727,7 @@ const UI = (function () {
   // ---------------------------------------------------------------
   // RESEARCH / DEVELOPMENT
   // ---------------------------------------------------------------
+  function groupName(id) { const g = D.INTEREST_GROUPS.find(x => x.id === id); return g ? g.name : id; }
   function renderResearch() {
     const el = document.getElementById("view-research");
     const branches = {};
@@ -653,6 +739,7 @@ const UI = (function () {
     let html = '<h2 class="section-title">Governance</h2>' +
       '<p class="hint">Standing edicts shape the settlement for as long as they hold. Development below is a one-time technology tree.</p>';
 
+    html += renderVoicesCard();
     html += '<div class="card"><h3>Edicts</h3>';
     for (const id in D.EDICTS) {
       const edict = D.EDICTS[id];
@@ -664,6 +751,8 @@ const UI = (function () {
       html += '<div class="row" style="align-items:flex-start">' +
         '<div><strong>' + edict.name + '</strong>' + (active ? ' <span class="tag good">Active</span>' : '') +
         '<div class="sub">' + edict.desc + '</div>' +
+        (edict.likes && edict.likes.length ? '<div class="sub">Pleases: ' + edict.likes.map(groupName).join(", ") + '</div>' : '') +
+        (edict.dislikes && edict.dislikes.length ? '<div class="sub" style="color:var(--blood-bright)">Angers: ' + edict.dislikes.map(groupName).join(", ") + '</div>' : '') +
         (onCooldown ? '<div class="sub">Can change again in ' + (edict.cooldown - turnsSince) + ' month(s)</div>' : '') + '</div>' +
         '<button class="btn small' + (active ? ' danger' : '') + '" data-edict="' + id + '"' + (onCooldown ? ' disabled' : '') + '>' +
         (active ? 'Repeal' : 'Declare') + '</button>' +
@@ -760,12 +849,25 @@ const UI = (function () {
           const pct = Math.round(E.previewCombatChance(state, o.combatCheck) * 100);
           oddsTag = ' <span class="tag' + (pct >= 55 ? " good" : (pct <= 35 ? " bad" : "")) + '">⚔ ' + pct + '% odds</span>';
         }
-        return '<button class="option-btn" data-opt="' + i + '">' + o.text + oddsTag + '</button>';
+        const short = E.eventOptionAffordable(state, i) ? null : E.eventOptionShortfall(state, o);
+        // petitions say what they cost and how the group will take it
+        let terms = "";
+        if (o.effect && o.effect.approval) {
+          const eff = E.scaleEventEffect(state, o.effect);
+          const bits = [];
+          for (const k in eff) if (D.RESOURCE_INFO[k] && !D.RESOURCE_INFO[k].max && typeof eff[k] === "number") bits.push((eff[k] > 0 ? "+" : "") + Math.round(eff[k]) + " " + D.RESOURCE_INFO[k].icon);
+          for (const k of ["stability", "reputation"]) if (o.effect[k]) bits.push((o.effect[k] > 0 ? "+" : "") + o.effect[k] + " " + D.RESOURCE_INFO[k].name.toLowerCase());
+          for (const g in o.effect.approval) bits.push(groupName(g) + " " + (o.effect.approval[g] > 0 ? "+" : "") + o.effect.approval[g]);
+          terms = '<div class="sub" style="margin-top:3px">' + bits.join(" · ") + '</div>';
+        }
+        const shortTag = short ? ' <span class="tag bad">not enough ' + short.map(k => D.RESOURCE_INFO[k].name.toLowerCase()).join(", ") + '</span>' : "";
+        return '<button class="option-btn" data-opt="' + i + '"' + (short ? " disabled" : "") + '>' + o.text + oddsTag + shortTag + terms + '</button>';
       }).join("") +
       '</div></div>';
     root.querySelectorAll("[data-opt]").forEach(btn => {
       btn.addEventListener("click", () => {
-        E.resolveEvent(state, parseInt(btn.dataset.opt));
+        const res = E.resolveEvent(state, parseInt(btn.dataset.opt));
+        if (!res.ok) { toast(res.reason); return; }
         root.innerHTML = "";
         E.saveGame(state);
         renderAll();

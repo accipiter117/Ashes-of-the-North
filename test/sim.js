@@ -10,11 +10,15 @@ function assert(cond, msg) {
 // need to resolve any pending event first or they'll silently no-op and measure
 // nothing. This bit three separate tests before it got factored out here — use this
 // instead of a bare Engine.advanceTurn() in any new isolated test.
+// Options the stores can't pay for are refused, so pick among the affordable ones.
+function resolveAffordable(s, preferred) {
+  const def = s.activeEvent; // local events and petitions both carry their options
+  const ok = def.options.map((_, i) => i).filter(i => Engine.eventOptionAffordable(s, i));
+  const idx = (preferred !== undefined && ok.includes(preferred)) ? preferred : ok[Math.floor(Math.random() * ok.length)];
+  return Engine.resolveEvent(s, idx);
+}
 function resolveIfEvent(s) {
-  if (s.activeEvent) {
-    const def = Data.LOCAL_EVENTS.find(e => e.id === s.activeEvent.id);
-    Engine.resolveEvent(s, Math.floor(Math.random() * def.options.length));
-  }
+  if (s.activeEvent) resolveAffordable(s);
 }
 function advanceClean(s) {
   resolveIfEvent(s);
@@ -22,6 +26,179 @@ function advanceClean(s) {
   if (!r.ok) throw new Error("advanceTurn unexpectedly refused: " + r.reason);
   return r;
 }
+
+// --- Regression: an event option the stores can't pay for is refused (it used to
+// clamp the cost to zero and pay out anyway), and the free choice still works. ---
+(function testUnaffordableEventRefused() {
+  const s = Engine.newGame("T");
+  const def = Data.LOCAL_EVENTS.find(e => e.options.some(o => o.effect && o.effect.stone < 0) && e.options.some(o => !o.combatCheck && !Object.keys(o.effect || {}).some(k => o.effect[k] < 0 && Data.RESOURCE_INFO[k] && !Data.RESOURCE_INFO[k].max)));
+  assert(def, "need an event with one costly and one free option");
+  s.activeEvent = { id: def.id, title: def.title, text: def.text, options: def.options };
+  s.resources.stone = 0;
+  const costly = def.options.findIndex(o => o.effect && o.effect.stone < 0);
+  const r = Engine.resolveEvent(s, costly);
+  assert(!r.ok && s.activeEvent, "a choice costing stone must be refused with an empty stone store");
+  const free = def.options.findIndex((_, i) => Engine.eventOptionAffordable(s, i));
+  assert(free >= 0 && Engine.resolveEvent(s, free).ok, "a free choice must still resolve");
+  console.log("Regression check OK: unaffordable event choices are refused, free ones still work");
+})();
+
+// --- Regression: workers with inputs stop when the store is empty; stores never go negative. ---
+(function testInputsNeverNegative() {
+  const s = Engine.newGame("T");
+  s.activeEvent = null;
+  Engine.tileAt(s.grid, 12, 3).building = "workshop";
+  s.resources.iron = 0.5; s.resources.wood = 0.2;
+  const idle = Engine.idleCitizens(s);
+  Engine.assignJob(s, idle[0].id, "blacksmith");
+  Engine.assignJob(s, idle[1].id, "carpenter");
+  Engine.advanceTurn(s);
+  assert(s.resources.iron >= 0 && s.resources.wood >= 0, "iron/wood went negative: " + s.resources.iron + " / " + s.resources.wood);
+  console.log("Regression check OK: blacksmiths and carpenters can't draw stores below zero");
+})();
+
+// --- Regression: buildings' own stability and influence (chapel, well...) apply each month. ---
+(function testBuildingStabilityApplies() {
+  const make = (withSanctum) => {
+    const s = Engine.newGame("T");
+    for (const c of s.citizens) c.job = null;
+    s.resources.stability = 50; s.resources.influence = 0; s.resources.coin = 500;
+    if (withSanctum) Engine.tileAt(s.grid, 10, 6).building = "sanctum";
+    s.activeEvent = null;
+    Engine.advanceTurn(s);
+    return s;
+  };
+  // same game, with and without: the gap is the sanctum's own +0.6 stability and +0.3 influence
+  // (randomness only enters through events and births, so compare a few runs)
+  let gapStab = 0, gapInf = 0;
+  for (let i = 0; i < 5; i++) { const a = make(false), b = make(true); gapStab += b.resources.stability - a.resources.stability; gapInf += b.resources.influence - a.resources.influence; }
+  assert(gapStab / 5 > 0.4, "sanctum stability +0.6/month should apply, average gap " + gapStab / 5);
+  assert(gapInf / 5 > 0.2, "sanctum influence +0.3/month should apply, average gap " + gapInf / 5);
+  console.log("Regression check OK: building stability and influence bonuses apply");
+})();
+
+// --- Regression: auto-assign staffs built workplaces and keeps woodcutters, rather
+// than turning everyone after the farms into lumberjacks. ---
+(function testAutoAssignSpreads() {
+  const s = Engine.newGame("T");
+  Engine.tileAt(s.grid, 12, 3).building = "farm";
+  Engine.tileAt(s.grid, 12, 4).building = "market";
+  Engine.autoAssignIdle(s);
+  assert(Engine.citizensInJob(s, "trader").length === 2, "both trader slots should be staffed");
+  assert(Engine.citizensInJob(s, "lumberjack").length >= 2, "at least two woodcutters");
+  assert(Engine.citizensInJob(s, "mason").length >= 1, "at least one mason");
+  assert(Engine.citizensInJob(s, "lumberjack").length < Engine.idleCitizens(s).length + 8, "lumberjacks shouldn't swallow everyone");
+  console.log("Regression check OK: auto-assign staffs workplaces and spreads gatherers");
+})();
+
+// ================= NEEDS, HAPPINESS, INTEREST GROUPS, GOODS =================
+function quietGame() {
+  const s = Engine.newGame("T");
+  for (let i = 0; i < 40; i++) { resolveIfEvent(s); Engine.advanceTurn(s); }
+  resolveIfEvent(s);
+  return s;
+}
+
+// Unarmed soldiers fight at half strength; arming them restores it.
+(function testWeaponsArmSoldiers() {
+  const s = Engine.newGame("T");
+  Engine.tileAt(s.grid, 12, 3).building = "guardhouse";
+  const idle = Engine.idleCitizens(s);
+  for (let i = 0; i < 3; i++) Engine.assignJob(s, idle[i].id, "militia");
+  s.resources.weapons = 0;
+  const bare = Engine.militaryStrength(s);
+  s.resources.weapons = 3;
+  const armed = Engine.militaryStrength(s);
+  assert(Math.abs(armed - bare * 2) < 1e-6, "armed militia should be twice as strong as unarmed: " + bare + " vs " + armed);
+  console.log("Needs check OK: weapons arm soldiers (unarmed fight at half strength)");
+})();
+
+// Needs grow with the settlement: a camp only asks for food and shelter; a town wants ale.
+(function testNeedsByStage() {
+  const s = Engine.newGame("T");
+  let active = Engine.needsReport(s).needs.filter(n => n.active).map(n => n.id);
+  assert(active.join() === "food,shelter", "a camp should only need food and shelter, got " + active);
+  s.meta.stage = "town";
+  active = Engine.needsReport(s).needs.filter(n => n.active).map(n => n.id);
+  assert(active.includes("ale") && active.includes("market") && !active.includes("furniture"), "a town needs ale and a market but not yet furniture: " + active);
+  console.log("Needs check OK: needs grow with the stage");
+})();
+
+// Ale is drunk once a town expects it, and a dry town is less happy than a wet one.
+(function testAleDrunkAndMissed() {
+  const run = (ale) => {
+    let total = 0;
+    for (let k = 0; k < 6; k++) {
+      const s = Engine.newGame("T");
+      s.meta.stage = "town";
+      s.resources.ale = ale; s.resources.food = 200;
+      s.activeEvent = null;
+      const before = s.resources.ale;
+      Engine.advanceTurn(s);
+      if (ale > 0) assert(s.resources.ale < before, "a town should drink its ale");
+      total += Engine.needsReport(s).needs.find(n => n.id === "ale").level;
+    }
+    return total / 6;
+  };
+  const dry = run(0), wet = run(200);
+  assert(wet > dry + 0.5, "ale need should be met with ale in store (" + wet + ") and not without (" + dry + ")");
+  console.log("Needs check OK: towns drink ale and miss it when it runs dry");
+})();
+
+// Edicts move interest groups: Forced Labour turns the labourers against the elder.
+(function testEdictsMoveGroups() {
+  const a = Engine.newGame("T"), b = Engine.newGame("T");
+  Engine.toggleEdict(b, "forced_labour");
+  for (let i = 0; i < 12; i++) { for (const s of [a, b]) { s.activeEvent = null; Engine.advanceTurn(s); } }
+  assert(b.groups.labourers < a.groups.labourers - 10, "forced labour should anger the labourers: " + a.groups.labourers + " vs " + b.groups.labourers);
+  console.log("Needs check OK: edicts move interest groups' approval");
+})();
+
+// A group under 25 petitions, the petition resolves, and its approval effect applies.
+(function testPetition() {
+  const s = Engine.newGame("T");
+  s.groups.merchants = 5;
+  let fired = false;
+  for (let i = 0; i < 30 && !fired; i++) {
+    s.activeEvent = null;
+    Engine.advanceTurn(s);
+    if (s.activeEvent && s.activeEvent.id === "petition_merchants") fired = true;
+  }
+  assert(fired, "a group at 5 approval should petition within 30 months");
+  s.resources.influence = 50;
+  const before = s.groups.merchants;
+  const r = Engine.resolveEvent(s, 0);
+  assert(r.ok && s.groups.merchants >= before + 20, "granting the charter should raise merchant approval: " + before + " -> " + s.groups.merchants);
+  console.log("Needs check OK: unhappy groups petition, and answering them moves approval");
+})();
+
+// Misery drives families away; they leave without counting as deaths.
+(function testEmigration() {
+  const s = Engine.newGame("T");
+  for (const g in s.groups) s.groups[g] = 0;
+  s.resources.food = 0;
+  const deathsBefore = s.stats.deaths;
+  for (let i = 0; i < 24; i++) { s.activeEvent = null; s.resources.food = 0; Engine.advanceTurn(s); }
+  assert((s.stats.emigrated || 0) > 0, "a starving, resentful camp should lose families to the road");
+  assert(Engine.settlementHappiness(s) < 0.4, "and should be miserable: " + Engine.settlementHappiness(s));
+  const left = s.citizens.filter(c => c.leftTurn !== undefined).length;
+  assert(left === s.stats.emigrated, "emigrants are marked as having left");
+  console.log("Needs check OK: misery drives families away (" + s.stats.emigrated + " left, not counted as deaths: " + (s.stats.deaths - deathsBefore) + " deaths)");
+})();
+
+// Old saves without needs or groups load and play on.
+(function testOldSaveUpgrades() {
+  const s = Engine.newGame("T");
+  delete s.groups; delete s.needs; delete s.petitionTurns; delete s.resources.ale; delete s.resources.furniture;
+  const store = {}; global.localStorage = { getItem: k => store[k] || null, setItem: (k, v) => { store[k] = v; }, removeItem: k => { delete store[k]; } };
+  store["ashesOfTheNorth_save_v1"] = JSON.stringify(s);
+  const r = Engine.loadGame();
+  assert(r.ok && r.state.groups && r.state.groups.farmers === 50 && r.state.resources.ale === 0, "old saves gain groups and new goods");
+  r.state.activeEvent = null;
+  assert(Engine.advanceTurn(r.state).ok, "and keep playing");
+  delete global.localStorage;
+  console.log("Needs check OK: old saves gain needs and interest groups");
+})();
 
 // --- Regression test: building-tier yield multipliers must actually apply ---
 // (farm2/farm3/workshop2 carry an `effect.yieldMult`; a prior bug compared building
@@ -164,7 +341,7 @@ function checkFinite(state, label) {
   let sawFollowUp = false;
   for (let i = 0; i < 20 && !sawFollowUp; i++) {
     if (s.activeEvent && s.activeEvent.id === "refugees_return_bitter") { sawFollowUp = true; break; }
-    if (s.activeEvent) Engine.resolveEvent(s, 0);
+    if (s.activeEvent) resolveAffordable(s, 0);
     const res = Engine.advanceTurn(s);
     assert(res.ok, "advanceTurn should succeed while chaining forward");
     if (s.activeEvent && s.activeEvent.id === "refugees_return_bitter") sawFollowUp = true;
@@ -187,7 +364,7 @@ function checkFinite(state, label) {
   function advanceUntil(targetEventId, maxTurns) {
     for (let i = 0; i < maxTurns; i++) {
       if (s.activeEvent && s.activeEvent.id === targetEventId) return true;
-      if (s.activeEvent) Engine.resolveEvent(s, 0); // an unrelated random event fired — resolve and keep going
+      if (s.activeEvent) resolveAffordable(s, 0); // an unrelated random event fired — resolve and keep going
       Engine.advanceTurn(s);
       if (s.activeEvent && s.activeEvent.id === targetEventId) return true;
     }
@@ -234,7 +411,7 @@ function checkFinite(state, label) {
   const namedIdsAtStart = new Set(s.citizens.map(c => c.id));
 
   for (let i = 0; i < 300; i++) {
-    if (s.activeEvent) Engine.resolveEvent(s, 0);
+    if (s.activeEvent) resolveAffordable(s, 0);
     // Pin the seeded couple's age, survival, and pairing every turn. Without this,
     // ordinary mortality (starvation, raids — not just old age) can kill one of them
     // partway through and cut the eligible window short, which is a real interaction
@@ -307,7 +484,7 @@ function checkFinite(state, label) {
 
   let sawIncident = false;
   for (let i = 0; i < 400; i++) {
-    if (s.activeEvent) Engine.resolveEvent(s, 0);
+    if (s.activeEvent) resolveAffordable(s, 0);
     const before = JSON.stringify(s.factions.map(f => f.relations));
     Engine.advanceTurn(s);
     const after = JSON.stringify(s.factions.map(f => f.relations));
@@ -426,12 +603,12 @@ function checkFinite(state, label) {
   for (let i = 0; i < 400; i++) {
     if (s.activeEvent) {
       const id = s.activeEvent.id;
-      if (!chainOnlyIds.has(id)) {
+      if (!chainOnlyIds.has(id) && id.indexOf("petition_") !== 0) { // petitions have their own yearly cooldown
         if (lastSeen[id] !== undefined && (s.meta.turn - lastSeen[id]) < 18) violations++;
         lastSeen[id] = s.meta.turn;
       }
       totalFires++;
-      Engine.resolveEvent(s, 0);
+      resolveAffordable(s, 0);
     }
     Engine.advanceTurn(s);
   }
@@ -710,9 +887,7 @@ for (let trial = 0; trial < 5; trial++) {
   for (let turn = 0; turn < 240; turn++) {
     // resolve any pending event with a random valid option
     if (state.activeEvent) {
-      const def = Data.LOCAL_EVENTS.find(e => e.id === state.activeEvent.id);
-      const idx = Math.floor(Math.random() * def.options.length);
-      const r = Engine.resolveEvent(state, idx);
+      const r = resolveAffordable(state);
       assert(r.ok, "event resolve failed: " + JSON.stringify(r));
     }
 
