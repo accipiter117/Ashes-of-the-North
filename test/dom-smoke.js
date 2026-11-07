@@ -116,7 +116,7 @@ try {
   assert(zoomAfterOut !== zoomAfterIn, "zoom out should shrink the tile-size custom property again");
   click(doc.getElementById("zoomFitBtn"));
   const zoomAfterReset = doc.getElementById("mapGrid").style.getPropertyValue("--tile-size");
-  assert(zoomAfterReset === "30px", "reset button should return zoom to the 30px default — got " + zoomAfterReset);
+  assert(zoomAfterReset === "40px", "reset button should return zoom to the 40px default — got " + zoomAfterReset);
 
   // Pinch-to-zoom: two-finger touchstart then spreading the fingers apart on touchmove
   // should zoom in, exactly like the +/- buttons but via a real gesture.

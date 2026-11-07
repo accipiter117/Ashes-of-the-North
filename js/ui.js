@@ -8,8 +8,8 @@ const UI = (function () {
   let state = null;
   let selectedTile = null;
   let citizenFilter = "idle"; // idle | all | important
-  let mapZoom = 30; // px per tile — see ZOOM_MIN/MAX/STEP below
-  const ZOOM_MIN = 16, ZOOM_MAX = 56, ZOOM_STEP = 6;
+  let mapZoom = 40; // px per tile — see ZOOM_MIN/MAX/STEP below
+  const ZOOM_DEFAULT = 40, ZOOM_MIN = 20, ZOOM_MAX = 80, ZOOM_STEP = 10;
 
   function init(s) {
     state = s;
@@ -146,11 +146,27 @@ const UI = (function () {
     return "";
   }
 
+  // Keeps whatever was in the middle of the view in the middle after zooming
+  // (the map used to jump back to its top-left corner).
+  let appliedZoom = null;
   function applyZoom() {
+    const wrap = document.getElementById("mapWrap");
+    const before = appliedZoom;
+    let cx = null, cy = null;
+    if (wrap && before && before !== mapZoom) {
+      cx = (wrap.scrollLeft + wrap.clientWidth / 2) / before;
+      cy = (wrap.scrollTop + wrap.clientHeight / 2) / before;
+    }
+    appliedZoom = mapZoom;
     const gridEl = document.getElementById("mapGrid");
     if (gridEl) gridEl.style.setProperty("--tile-size", mapZoom + "px");
     const lvl = document.getElementById("zoomLevel");
-    if (lvl) lvl.textContent = Math.round((mapZoom / 30) * 100) + "%";
+    if (lvl) lvl.textContent = Math.round((mapZoom / ZOOM_DEFAULT) * 100) + "%";
+    if (typeof VillageView !== "undefined") VillageView.setTileSize(mapZoom);
+    if (wrap && cx !== null) {
+      wrap.scrollLeft = Math.max(0, cx * mapZoom - wrap.clientWidth / 2);
+      wrap.scrollTop = Math.max(0, cy * mapZoom - wrap.clientHeight / 2);
+    }
   }
 
   function renderSettlement() {
@@ -179,19 +195,30 @@ const UI = (function () {
       '<span class="zoom-level" id="zoomLevel">100%</span>' +
       '<button class="zoom-btn" id="zoomInBtn" title="Zoom in">+</button>' +
       '<button class="zoom-btn" id="zoomFitBtn" title="Reset zoom" style="width:auto;padding:0 10px;font-size:11px">Reset</button>' +
-      '<span class="zoom-hint">Pinch or use +/− · swipe to pan</span>' +
+      '<span class="zoom-hint" id="dayClock">Pinch or use +/− · swipe to pan</span>' +
       '</div>';
 
     el.innerHTML =
       '<h2 class="section-title">' + state.settlementName + ': ' + D.STAGES.find(s => s.id === state.meta.stage).name + '</h2>' +
-      '<p class="hint">Tap a tile to inspect it, construct a new building, or upgrade what stands there. Dashed tiles are ruins from before the war.</p>' +
+      '<p class="hint">Tap a tile to inspect it, construct a new building, or upgrade what stands there. Tap a resident to see who they are. The broken stone buildings are ruins from before the war.</p>' +
       toolbar +
       grid +
       '<div id="tilePanel"></div>' +
       renderMilitarySummaryCard();
 
+    // The living village: painted map and residents going about their day.
+    const gridEl = document.getElementById("mapGrid");
+    if (typeof VillageView !== "undefined" && VillageView.mount(gridEl, state, mapZoom, label => {
+      const c = document.getElementById("dayClock");
+      if (c) c.textContent = label;
+    })) gridEl.classList.add("painted");
+
     el.querySelectorAll(".tile").forEach(elm => {
-      elm.addEventListener("click", () => {
+      elm.addEventListener("click", (ev) => {
+        if (typeof VillageView !== "undefined" && gridEl.classList.contains("painted")) {
+          const who = VillageView.personAt(parseInt(elm.dataset.x) + ev.offsetX / mapZoom, parseInt(elm.dataset.y) + ev.offsetY / mapZoom);
+          if (who) toast(who.name + ", " + who.job.toLowerCase() + (who.doing ? ", " + who.doing : ""));
+        }
         const prevSelected = el.querySelector(".tile.selected");
         if (prevSelected) prevSelected.classList.remove("selected");
         elm.classList.add("selected");
@@ -209,7 +236,7 @@ const UI = (function () {
       applyZoom();
     });
     document.getElementById("zoomFitBtn").addEventListener("click", () => {
-      mapZoom = 30; // default tile size
+      mapZoom = ZOOM_DEFAULT;
       applyZoom();
     });
 
@@ -240,7 +267,12 @@ const UI = (function () {
 
     applyZoom();
     const newWrap = document.getElementById("mapWrap");
-    if (newWrap) { newWrap.scrollLeft = prevScrollLeft; newWrap.scrollTop = prevScrollTop; }
+    if (newWrap && !prevWrap && typeof VillageView !== "undefined" && VillageView.centre()) {
+      // first look at the map: open on the village, not the empty river bank
+      const c = VillageView.centre();
+      newWrap.scrollLeft = Math.max(0, c.x * mapZoom - newWrap.clientWidth / 2);
+      newWrap.scrollTop = Math.max(0, c.y * mapZoom - newWrap.clientHeight / 2);
+    } else if (newWrap) { newWrap.scrollLeft = prevScrollLeft; newWrap.scrollTop = prevScrollTop; }
     if (selectedTile) renderTilePanel();
   }
   function clampZoom(v) { return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, v)); }

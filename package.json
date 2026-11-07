@@ -7,7 +7,8 @@
     "test:sim": "node test/sim.js",
     "test:smoke": "node test/dom-smoke.js",
     "test": "npm run test:sim && npm run test:smoke",
-    "playtest": "node tools/playtest.js"
+    "playtest": "node tools/playtest.js",
+    "test:village": "node test/village-browser.js"
   },
   "devDependencies": {
     "jsdom": "^24.0.0"

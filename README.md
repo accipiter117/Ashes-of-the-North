@@ -10,7 +10,7 @@ expeditions, and writing your settlement's chronicle across generations.
 music, UI, or code from CD Projekt Red. Place names and general setting concepts
 (Northern Kingdoms, Temeria, witchers, familiar monster archetypes) are used only for
 atmosphere and consistency, in the same way any homage to a fictional world's flavour
-works — every line of text, every mechanic, and all artwork (CSS/emoji-based, no image
+works — every line of text, every mechanic, and all artwork (drawn in code on a canvas, plus a few emoji; no image
 assets) is original.
 
 ## Running it locally
@@ -80,6 +80,14 @@ explore → respond to events → survive the season → develop → expand. One
 - Mobile-first UI: bottom tab navigation, a persistent scrollable resource bar, a
   fixed one-tap "advance month" control, touch-sized targets throughout, and a
   settlement map you pan horizontally rather than pinch-zoom
+- A living village: the map is painted top-down with the roofs off (walls, floors,
+  beds, forges, market stalls, crop rows) and every resident walks a daily routine
+  that follows their job: out to the fields, forest, mine, dock or workshop at dawn,
+  a midday meal at the fire, an evening at the chapel, market or well, and home at
+  night while half the soldiers keep a torch-lit watch. Day turns to night, the
+  seasons change the ground and crops, and the weather comes and goes. Tap a
+  resident to see who they are. It is purely cosmetic (it only reads game state and
+  uses its own random numbers), and it pauses whenever the map isn't on screen
 
 ## File structure
 
@@ -91,12 +99,18 @@ js/data.js            Game content: resources, jobs, buildings, tech tree, facti
 js/engine.js           Pure game-logic module: state, turn simulation, construction,
                        diplomacy, combat, exploration, save/load — no DOM access, so it
                        can be run and tested headlessly in Node
+js/village-view.js      The living village: paints the map and animates residents' days
+                       (cosmetic only; never changes game state)
 js/ui.js                Renders engine state to the DOM and wires up all interactions
 js/main.js               Boot sequence and the new game / continue start screen
 test/sim.js               Headless simulation: 5 trials × 240 simulated turns exercising
                           construction, jobs, diplomacy, exploration, research and
                           combat, asserting no NaNs, no out-of-range stats, and a clean
                           save/load round trip (including corrupted-save handling)
+test/village-browser.js    Real-browser (Playwright) check of the living village, which jsdom
+                          can't draw: canvas present, animating, day clock, tapping a
+                          resident, zoom, restart after leaving the map. `npm run
+                          test:village`; skips if Playwright isn't installed
 test/dom-smoke.js          jsdom-based end-to-end test: serves the real files over HTTP,
                           loads the actual page, and drives it through the browser DOM —
                           new game, every view, building, job assignment, ~30 turns of
