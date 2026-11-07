@@ -82,7 +82,7 @@ explore → respond to events → survive the season → develop → expand. One
 - Local-storage save/load with New Game / Continue / Save / Reset, and graceful
   handling of missing or corrupted save data (verified by an automated test)
 - Mobile-first UI: bottom tab navigation, a persistent scrollable resource bar, a
-  fixed time control (pause, speed, skip to next month), touch-sized targets throughout, and a
+  fixed time control (pause and three speeds), touch-sized targets throughout, and a
   settlement map you pan horizontally rather than pinch-zoom
 - Needs and the voices of the town: households expect more as the settlement grows
   (food and shelter in a camp; safety from a hamlet; faith and health from a village;
@@ -98,8 +98,8 @@ explore → respond to events → survive the season → develop → expand. One
   New buildings for this: Wayside Shrine (raise any of them into a chapel),
   Brewhouse and Joiner's Shop
 - Real time with pause: the months run on their own (each month is one day and night on
-  the map, about 72 seconds at normal speed) with pause, 1×, 2× and 4× speed and a skip to
-  the next month; events pause the game for a decision. Space pauses on a keyboard.
+  the map, about 72 seconds at normal speed) with pause, 1×, 2× and 4× speed;
+  events pause the game for a decision. Space pauses on a keyboard.
 - Battles on the map: raids by hostile factions, monster incursions (drowners from the
   river, nekkers from the woods, ghouls from the ruins) and the defence events are fought
   out in real time. Attackers walk in, soldiers muster at the guardhouse and go to meet
