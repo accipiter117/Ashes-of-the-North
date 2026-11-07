@@ -148,7 +148,7 @@ const GameEngine = (function () {
       }
     }
     if (added > 0) {
-      chronicle(state, "New land to the east and south has been surveyed and opened for settlement — " + added + " new plots await.");
+      chronicle(state, "New land to the east and south has been surveyed and opened for settlement: " + added + " new plots await.");
     }
   }
 
@@ -364,7 +364,7 @@ const GameEngine = (function () {
     const current = state.edicts[edictId] || { active: false, sinceTurn: -999 };
     const turnsSince = state.meta.turn - current.sinceTurn;
     if (turnsSince < def.cooldown) {
-      return { ok: false, reason: "This edict was changed too recently — wait " + (def.cooldown - turnsSince) + " more month(s)." };
+      return { ok: false, reason: "This edict was changed too recently. Wait " + (def.cooldown - turnsSince) + " more month(s)." };
     }
     state.edicts[edictId] = { active: !current.active, sinceTurn: state.meta.turn };
     chronicle(state, (state.edicts[edictId].active ? "The edict of " + def.name + " was declared." : def.name + " was repealed."));
@@ -408,7 +408,7 @@ const GameEngine = (function () {
     const job = D.JOBS[jobId];
     if (!job) return { ok: false, reason: "Unknown job." };
     if (jobCapacityUsed(state, jobId) >= jobCapacityMax(state, jobId)) {
-      return { ok: false, reason: "No open slots for that job yet — build or upgrade the required building." };
+      return { ok: false, reason: "No open slots for that job yet. Build or upgrade the required building." };
     }
     c.job = jobId;
     c.type = job.type;
@@ -512,7 +512,7 @@ const GameEngine = (function () {
     const t = tileAt(state.grid, x, y);
     if (!t) return { ok: false, reason: "Invalid tile." };
     if (t.constructing) return { ok: false, reason: "Already under construction." };
-    if (t.building) return { ok: false, reason: "Tile occupied — try upgrading instead." };
+    if (t.building) return { ok: false, reason: "Tile occupied. Try upgrading instead." };
     const b = D.BUILDINGS[buildingId];
     if (!b || b.tier !== 0 || b.ruin) return { ok: false, reason: "Not a valid new building." };
     if (b.requiresTile && b.requiresTile !== t.terrain) return { ok: false, reason: "Wrong terrain for this building." };
@@ -735,7 +735,7 @@ const GameEngine = (function () {
       state.resources.coin = 0;
       const penalty = clamp(round2(shortfall * 0.15), 0, 8);
       state.resources.stability = clamp(round2(state.resources.stability - penalty), 0, 100);
-      logMsg(state, "The treasury could not cover " + shortfall + " coin in upkeep this month — unrest grows.");
+      logMsg(state, "The treasury could not cover " + shortfall + " coin in upkeep this month. Unrest grows.");
     }
   }
 
@@ -995,7 +995,7 @@ const GameEngine = (function () {
       case "alliance":
         f.allied = true;
         state.resources.reputation = clamp(round2(state.resources.reputation + 8), 0, 100);
-        chronicle(state, "A formal alliance was struck with " + f.name + " — their strength stands with the settlement's now.");
+        chronicle(state, "A formal alliance was struck with " + f.name + ". Their strength stands with the settlement's now.");
         break;
       default: break;
     }
@@ -1491,7 +1491,7 @@ const GameEngine = (function () {
         }
         state.citizenCounter = maxId;
         if (duplicatesFound > 0) {
-          logMsg(state, "Some settlement records from an older version had conflicting identifiers — corrected for everyone created from now on.");
+          logMsg(state, "Some settlement records from an older version had conflicting identifiers (corrected for everyone created from now on).");
         }
       }
       if (state.factions && state.factions.some(f => !f.relations)) initFactionRelations(state.factions);

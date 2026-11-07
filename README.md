@@ -104,7 +104,11 @@ test/dom-smoke.js          jsdom-based end-to-end test: serves the real files ov
                           and save/load — verifying the built page itself works, not
                           just the underlying logic
 ```
-`test/` and any `node_modules/` are development-only and not required to run or deploy
+`tools/playtest.js` (`npm run playtest`) plays 20 whole games as a sensible player and
+reports how far settlements get (stage reached and when, population, stability, deaths,
+battles). Run it before and after any balance change to see what actually moved.
+
+`test/`, `tools/` and any `node_modules/` are development-only and not required to run or deploy
 the game — you can delete them from a production copy if you like a leaner repo.
 
 ## Tests performed

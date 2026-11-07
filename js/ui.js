@@ -183,7 +183,7 @@ const UI = (function () {
       '</div>';
 
     el.innerHTML =
-      '<h2 class="section-title">' + state.settlementName + ' — ' + D.STAGES.find(s => s.id === state.meta.stage).name + '</h2>' +
+      '<h2 class="section-title">' + state.settlementName + ': ' + D.STAGES.find(s => s.id === state.meta.stage).name + '</h2>' +
       '<p class="hint">Tap a tile to inspect it, construct a new building, or upgrade what stands there. Dashed tiles are ruins from before the war.</p>' +
       toolbar +
       grid +
@@ -265,9 +265,9 @@ const UI = (function () {
       '<div class="row"><span>Defense</span><span>' + cap.defense.toFixed(0) + '</span></div>' +
       '<div class="row"><span>Upkeep</span><span>' + upkeep.toFixed(1) + ' coin/mo' +
         (upkeepShortfall ? ' <span class="tag bad">short</span>' : '') + '</span></div>' +
-      (upkeepShortfall ? '<div class="sub" style="color:var(--blood-bright);margin-top:-2px">The treasury can\'t cover upkeep — stability is taking the cost.</div>' : '') +
+      (upkeepShortfall ? '<div class="sub" style="color:var(--blood-bright);margin-top:-2px">The treasury can\'t cover upkeep, so stability is taking the cost.</div>' : '') +
       '<div class="row"><span>Storage before spoilage</span><span>' + softCap + '</span></div>' +
-      '<div class="sub" style="margin-top:-2px">Coin, tools, weapons, knowledge, and influence above this waste away each month — a reason to spend, not just hoard.</div>' +
+      '<div class="sub" style="margin-top:-2px">Coin, tools, weapons, knowledge, and influence above this waste away each month (a reason to spend, not just hoard).</div>' +
       '<div class="row"><span>Legacy Score</span><span>' + E.legacyScore(state) + '</span></div></div>';
   }
 
@@ -285,7 +285,7 @@ const UI = (function () {
     } else {
       headerTitle = terrainLabel + " (empty)";
     }
-    let html = '<div class="card"><h3>' + headerTitle + '</h3><div class="sub">Tile (' + t.x + ', ' + t.y + ') — ' + terrainLabel + ' ground</div>';
+    let html = '<div class="card"><h3>' + headerTitle + '</h3><div class="sub">Tile (' + t.x + ', ' + t.y + '): ' + terrainLabel + ' ground</div>';
 
     if (t.constructing) {
       const b = D.BUILDINGS[t.constructing.buildingId];
@@ -333,7 +333,7 @@ const UI = (function () {
           const b = D.BUILDINGS[id];
           const preview = E.previewAdjacency(state, t.x, t.y, id);
           html += '<button class="btn block small" style="margin-bottom:6px;text-align:left" data-build="' + id + '">' +
-            b.name + ' — ' + costString(b.cost) + ' (' + b.buildTime + ' mo)' +
+            b.name + ': ' + costString(b.cost) + ' (' + b.buildTime + ' mo)' +
             (preview ? '<br><span style="color:var(--moss);font-size:11px">+ ' + preview.matched.join(", ") + '</span>' : '') +
             '</button>';
         }
@@ -357,7 +357,7 @@ const UI = (function () {
     if (demolishBtn) demolishBtn.addEventListener("click", () => {
       if (!confirm("Demolish this building? You'll reclaim some materials, but its tier progress is lost.")) return;
       const r = E.demolishBuilding(state, t.x, t.y);
-      if (!r.ok) toast(r.reason); else toast("Building cleared — the tile is free again.");
+      if (!r.ok) toast(r.reason); else toast("Building cleared. The tile is free again.");
       renderAll();
     });
     panel.querySelectorAll("[data-build]").forEach(btn => {
@@ -401,7 +401,7 @@ const UI = (function () {
 
     el.innerHTML =
       '<h2 class="section-title">People of ' + state.settlementName + '</h2>' +
-      '<p class="hint">Population ' + all.length + '. Assign idle residents to jobs — open slots depend on what has been built.</p>' +
+      '<p class="hint">Population ' + all.length + '. Assign idle residents to jobs. Open slots depend on what has been built.</p>' +
       '<div class="row" style="margin-bottom:10px;gap:6px">' +
         '<button class="btn small' + (citizenFilter === "idle" ? " primary" : "") + '" data-filter="idle">Idle</button>' +
         '<button class="btn small' + (citizenFilter === "important" ? " primary" : "") + '" data-filter="important">Notable</button>' +
@@ -431,7 +431,7 @@ const UI = (function () {
   // current job from the "full" capacity count so they always see their own job as
   // selectable (otherwise anyone in a fully-staffed job would see it wrongly disabled).
   function buildJobOptionsHtml(currentCitizen) {
-    let html = '<option value=""' + (!currentCitizen.job ? " selected" : "") + '>— Idle —</option>';
+    let html = '<option value=""' + (!currentCitizen.job ? " selected" : "") + '>Idle</option>';
     for (const typeId in D.WORKER_TYPES) {
       html += '<optgroup label="' + D.WORKER_TYPES[typeId].name + '">';
       for (const jobId of D.WORKER_TYPES[typeId].jobs) {
@@ -441,7 +441,7 @@ const UI = (function () {
         const full = max !== 999 && used >= max;
         html += '<option value="' + jobId + '"' + (full && !isCurrent ? ' disabled' : '') + (isCurrent ? ' selected' : '') + '>' +
           D.JOBS[jobId].name + (max === 999 ? "" : " (" + Math.min(used + 1, max) + "/" + max + ")") +
-          (full && !isCurrent ? " — full" : "") + '</option>';
+          (full && !isCurrent ? " (full)" : "") + '</option>';
       }
       html += '</optgroup>';
     }
@@ -493,7 +493,7 @@ const UI = (function () {
     const el = document.getElementById("view-build");
     const queue = state.grid.filter(t => t.constructing);
     let html = '<h2 class="section-title">Construction</h2>' +
-      '<p class="hint">New buildings and upgrades are placed from the Settlement map — select an empty or existing tile there. This page tracks progress and overall development.</p>';
+      '<p class="hint">New buildings and upgrades are placed from the Settlement map: select an empty or existing tile there. This page tracks progress and overall development.</p>';
 
     html += '<div class="card"><h3>Active Construction (' + queue.length + ')</h3>';
     if (queue.length === 0) {
@@ -513,7 +513,7 @@ const UI = (function () {
       const bestTier = built.reduce((m, t) => Math.max(m, D.BUILDINGS[t.building].tier), -1);
       const name = D.BUILDINGS[chain[Math.max(bestTier, 0)]].name;
       html += '<div class="row"><span>' + D.BUILDINGS[chain[0]].name.replace("Ruined ", "") + '</span>' +
-        '<span>' + (built.length ? built.length + '× — best: ' + name : '<span class="tag">none built</span>') + '</span></div>';
+        '<span>' + (built.length ? built.length + '× (best: ' + name + ')' : '<span class="tag">none built</span>') + '</span></div>';
     }
     html += '</div>';
     el.innerHTML = html;
@@ -536,7 +536,7 @@ const UI = (function () {
       const allianceCost = E.factionActionCost(state, f.id, "form_alliance");
       html += '<div class="card">' +
         '<div class="faction-header"><h3>' + f.name + '</h3><span class="tag">' + f.type + '</span></div>' +
-        '<div class="sub">' + f.desc + ' — led by ' + f.leader + '</div>' +
+        '<div class="sub">' + f.desc + ' Led by ' + f.leader + '.' + '</div>' +
         '<div class="rel-bar"><div class="rel-bar-fill" style="width:' + pct + '%"></div><div class="rel-bar-mid"></div></div>' +
         '<div class="sub">Relationship ' + Math.round(f.relationship) + ' · Trust ' + Math.round(f.trust) +
           (f.tradeAgreement ? ' · <span class="tag good">Trade Agreement</span>' : '') +
@@ -544,7 +544,7 @@ const UI = (function () {
         (f.allied ? '' :
           '<button class="btn' + (allianceEligible ? ' primary' : '') + ' block small" style="margin-top:8px" data-faction="' + f.id + '" data-action="form_alliance"' + (allianceEligible ? '' : ' disabled') + '>' +
             'Propose Formal Alliance (' + costString(allianceCost) + ')' +
-            (allianceEligible ? '' : ' — needs ' + allianceAction.requiresRelationship + '+ relationship & ' + allianceAction.requiresTrust + '+ trust') +
+            (allianceEligible ? '' : ' (needs ' + allianceAction.requiresRelationship + '+ relationship & ' + allianceAction.requiresTrust + '+ trust)') +
           '</button>') +
         '<div class="grid2" style="margin-top:8px">' +
         regularActions.map(a => {
@@ -598,7 +598,7 @@ const UI = (function () {
       const label = relationLabel(p.val);
       return '<div class="row"><span>' + p.a + ' ↔ ' + p.b + '</span><span class="tag ' + label.cls + '">' + label.text + '</span></div>';
     }).join("");
-    return '<div class="card"><h3>Regional Relations</h3><p class="sub">How the region\'s factions see each other — this shifts on its own, separate from your own standing with each.</p>' + rows + '</div>';
+    return '<div class="card"><h3>Regional Relations</h3><p class="sub">How the region\'s factions see each other. This shifts on its own, separate from your own standing with each.</p>' + rows + '</div>';
   }
   function clamp01(v) { return Math.max(0, Math.min(1, v)); }
 

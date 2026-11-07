@@ -657,13 +657,13 @@ const GameData = (function () {
     {
       id: "night_alarm",
       title: "Night Alarm",
-      text: "A watchman's horn sounds in the small hours — movement at the tree line, though nothing is yet certain.",
+      text: "A watchman's horn sounds in the small hours. Movement at the tree line, though nothing is yet certain.",
       options: [
         { text: "Rally swiftly to the walls", combatCheck: {
             attackerStrength: 15, strengthMult: 1.5, defenseMult: 1, loseCasualtyChance: 0.15,
             winEffect: { stability: 2 }, winChronicle: "A swift rally to the walls met the night's alarm without serious incident.",
             loseEffect: { stability: -3, coin: -8 }, loseChronicle: "The night alarm caught the settlement's defenders too slow to organise." } },
-        { text: "Return to sleep — likely nothing", effect: { stability: -2 }, chronicle: "The night alarm went unanswered. Some slept uneasily after." }
+        { text: "Return to sleep (likely nothing)", effect: { stability: -2 }, chronicle: "The night alarm went unanswered. Some slept uneasily after." }
       ]
     },
     {
@@ -681,7 +681,7 @@ const GameData = (function () {
     {
       id: "show_of_force",
       title: "A Show of Force",
-      text: "The militia captain suggests a deliberate patrol in force near the roads the Grey Company favours — a show of strength rather than a response to any specific threat.",
+      text: "The militia captain suggests a deliberate patrol in force near the roads the Grey Company favours: a show of strength rather than a response to any specific threat.",
       options: [
         { text: "Send the militia on patrol", combatCheck: {
             attackerStrength: 20, strengthMult: 1.8, defenseMult: 0.2, loseCasualtyChance: 0.1,
