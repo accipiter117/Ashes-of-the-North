@@ -654,7 +654,11 @@ const GameData = (function () {
     },
 
     // -------------------------------------------------------------
-    // DEFENSE SCENARIOS — options with `combatCheck` resolve against the settlement's
+    // DEFENSE SCENARIOS. Options with `combatCheck.onMap` are fought out on the map
+    // (engine.js startBattle): `kind` of attacker, where they come `from`, and whether
+    // soldiers `hold` inside the settlement or `sally` out to meet them; one attacker
+    // per 5 points of attackerStrength. Options without it happen away from home and
+    // still resolve as a single roll. Originally: options with `combatCheck` resolve against the settlement's
     // actual military strength and fortifications (see `resolveEventCombat` in
     // engine.js) rather than a fixed effect, so a militia and guardhouses built up
     // over the game genuinely change these outcomes instead of sitting idle.
@@ -665,10 +669,12 @@ const GameData = (function () {
       text: "Scouts report a band of raiders moving along the road toward the settlement's outer fields.",
       options: [
         { text: "Muster the militia to intercept", combatCheck: {
+            onMap: { kind: "raider", from: "east", mode: "sally", label: "Raiders" },
             attackerStrength: 25, strengthMult: 2.2, defenseMult: 0.3,
             winEffect: { reputation: 5, coin: 12 }, winChronicle: "Militia intercepted raiders on the road and drove them off.",
             loseEffect: { stability: -4, food: -10 }, loseChronicle: "Militia sent to intercept raiders were beaten back." } },
         { text: "Hold the walls and let them pass", combatCheck: {
+            onMap: { kind: "raider", from: "east", mode: "hold", label: "Raiders" },
             attackerStrength: 20, strengthMult: 0.4, defenseMult: 2,
             winEffect: { stability: 2 }, winChronicle: "The settlement held behind its walls as raiders passed without incident.",
             loseEffect: { coin: -15, food: -8 }, loseChronicle: "Raiders tested the walls and made off with what they could reach." } },
@@ -681,10 +687,12 @@ const GameData = (function () {
       text: "Farmers report a pack of nekkers denning close to the outer fields, growing bolder by the week.",
       options: [
         { text: "Send soldiers to clear the den", combatCheck: {
+            onMap: { kind: "nekker", from: "forest", mode: "sally", label: "Nekkers" },
             attackerStrength: 22, strengthMult: 2, defenseMult: 0.2, loseCasualtyChance: 0.4,
             winEffect: { food: 10, reputation: 3 }, winChronicle: "Soldiers cleared the nekker den near the fields.",
             loseEffect: { food: -15, stability: -3 }, loseChronicle: "An attempt to clear the nekker den was driven back with losses." } },
         { text: "Fortify the field edge and wait them out", combatCheck: {
+            onMap: { kind: "nekker", from: "forest", mode: "hold", label: "Nekkers" },
             attackerStrength: 18, strengthMult: 0.3, defenseMult: 1.8,
             winEffect: { stability: 1 }, winChronicle: "The fields were fortified, and the nekker pack moved on of its own accord.",
             loseEffect: { food: -12 }, loseChronicle: "The nekker pack pressed in despite the field fortifications." } },
@@ -697,11 +705,13 @@ const GameData = (function () {
       text: "A sizeable armed band, banners unfamiliar, is spotted making directly for the settlement.",
       options: [
         { text: "Meet them in open battle", combatCheck: {
+            onMap: { kind: "warrior", from: "north", mode: "sally", label: "The warband" },
             attackerStrength: 55, strengthMult: 2.5, defenseMult: 0.2, winCasualtyChance: 0.15, loseCasualtyChance: 0.5,
             winEffect: { reputation: 12, influence: 4 }, winChronicle: "The settlement's militia met a rival warband in open battle and won decisively.",
             loseEffect: { stability: -10, coin: -30 }, loseChronicle: "The settlement's militia was routed in open battle against a rival warband.",
             loseFollowUp: { eventId: "warband_returns", delayTurns: 10 } } },
         { text: "Retreat behind the walls", combatCheck: {
+            onMap: { kind: "warrior", from: "north", mode: "hold", label: "The warband" },
             attackerStrength: 45, strengthMult: 0.4, defenseMult: 2.2, loseCasualtyChance: 0.3,
             winEffect: { stability: 3 }, winChronicle: "The settlement held behind its walls against a rival warband until it withdrew.",
             loseEffect: { stability: -8, food: -25 }, loseChronicle: "The walls were breached by a rival warband before it withdrew.",
@@ -715,6 +725,7 @@ const GameData = (function () {
       text: "Word comes that the warband turned back before has regrouped, emboldened, and is marching on the settlement again.",
       options: [
         { text: "Make a stand", combatCheck: {
+            onMap: { kind: "warrior", from: "east", mode: "sally", label: "The warband" },
             attackerStrength: 60, strengthMult: 2.3, defenseMult: 0.6, winCasualtyChance: 0.1, loseCasualtyChance: 0.5,
             winEffect: { reputation: 15, stability: 4 }, winChronicle: "The returning warband was met and finally broken for good.",
             loseEffect: { stability: -14, food: -30, coin: -20 }, loseChronicle: "The returning warband overran what defense could be mustered." } },
@@ -739,6 +750,7 @@ const GameData = (function () {
       text: "A watchman's horn sounds in the small hours. Movement at the tree line, though nothing is yet certain.",
       options: [
         { text: "Rally swiftly to the walls", combatCheck: {
+            onMap: { kind: "nekker", from: "forest", mode: "hold", label: "Night raiders" },
             attackerStrength: 15, strengthMult: 1.5, defenseMult: 1, loseCasualtyChance: 0.15,
             winEffect: { stability: 2 }, winChronicle: "A swift rally to the walls met the night's alarm without serious incident.",
             loseEffect: { stability: -3, coin: -8 }, loseChronicle: "The night alarm caught the settlement's defenders too slow to organise." } },
@@ -751,6 +763,7 @@ const GameData = (function () {
       text: "The harvest sits ready in the fields, and word reaches the settlement that raiders have taken notice.",
       options: [
         { text: "Guard the harvest with soldiers", combatCheck: {
+            onMap: { kind: "raider", from: "north", mode: "sally", label: "Harvest raiders" },
             attackerStrength: 28, strengthMult: 2, defenseMult: 0.3,
             winEffect: { food: 20 }, winChronicle: "The harvest was guarded successfully against raiders and brought in whole.",
             loseEffect: { food: -25 }, loseChronicle: "Raiders broke through the harvest guard and made off with much of it." } },

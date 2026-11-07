@@ -17,6 +17,15 @@ function resolveAffordable(s, preferred) {
   const idx = (preferred !== undefined && ok.includes(preferred)) ? preferred : ok[Math.floor(Math.random() * ok.length)];
   return Engine.resolveEvent(s, idx);
 }
+// Combat choices fought on the map start a battle; run it to the end and report the outcome.
+function resolveCombat(s, idx) {
+  const r = Engine.resolveEvent(s, idx);
+  if (r.ok && r.combatWon === null && Engine.battleActive(s)) {
+    Engine.finishBattleNow(s);
+    r.combatWon = s.battle.outcome === "won";
+  }
+  return r;
+}
 function resolveIfEvent(s) {
   if (s.activeEvent) resolveAffordable(s);
 }
@@ -638,11 +647,13 @@ function checkFinite(state, label) {
             partnerId: null, childrenIds: [], parentIds: [] });
         }
       }
+      if (strengthLevel === "high") s.resources.weapons = 40; // soldiers need a weapon each now
+      Engine.tileAt(s.grid, 9, 8).building = "granary"; // something worth raiding
       // "low" strength uses the settlement exactly as newGame creates it — no soldiers assigned at all.
       const def = Data.LOCAL_EVENTS.find(e => e.id === "raiders_on_road");
       s.activeEvent = { id: def.id, title: def.title, text: def.text, options: def.options };
       const idx = def.options.findIndex(o => o.text === "Muster the militia to intercept");
-      const r = Engine.resolveEvent(s, idx);
+      const r = resolveCombat(s, idx);
       if (r.combatWon) wins++;
     }
     return wins / trials;
@@ -661,7 +672,9 @@ function checkFinite(state, label) {
 // trial's result is certain — a truly "always guaranteed" outcome would itself be a bug.
 (function testCombatCheckEffectsAndFollowUp() {
   function makeUndefendedSettlement(seed) {
-    return Engine.newGame("CombatEffectTest" + seed);
+    const s = Engine.newGame("CombatEffectTest" + seed);
+    Engine.tileAt(s.grid, 9, 8).building = "granary"; // something worth raiding
+    return s;
   }
   function makeOverwhelmingSettlement(seed) {
     const s = Engine.newGame("CombatEffectTest2_" + seed);
@@ -688,7 +701,7 @@ function checkFinite(state, label) {
     s.activeEvent = { id: def.id, title: def.title, text: def.text, options: def.options };
     const idx = def.options.findIndex(o => o.text === "Meet them in open battle");
     const before = s.resources.stability;
-    const r = Engine.resolveEvent(s, idx);
+    const r = resolveCombat(s, idx);
     assert(r.ok, "resolving a combatCheck option should succeed");
     if (r.combatWon === false) {
       assert(s.resources.stability < before, "on a loss, the loseEffect must apply (stability should drop)");
@@ -705,7 +718,7 @@ function checkFinite(state, label) {
     s2.activeEvent = { id: nightDef.id, title: nightDef.title, text: nightDef.text, options: nightDef.options };
     const idx2 = nightDef.options.findIndex(o => o.text === "Rally swiftly to the walls");
     const stabBefore = s2.resources.stability;
-    const r2 = Engine.resolveEvent(s2, idx2);
+    const r2 = resolveCombat(s2, idx2);
     if (r2.combatWon === true) {
       assert(s2.resources.stability >= stabBefore, "on a win, the winEffect (stability +2) must apply, not the loseEffect");
       sawWinWithCorrectEffect = true;
