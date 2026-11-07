@@ -420,16 +420,67 @@ const GameEngine = (function () {
     c.job = null;
     return { ok: true };
   }
+  // Auto-assign used to walk a fixed list in which lumberjack (an uncapped job) came
+  // third, so after the farms filled every other idle resident became a lumberjack:
+  // the market, mine, hall and school never got staff, coin dried up, upkeep went
+  // unpaid and stability fell to zero. Now it staffs the buildings the player paid
+  // for first, then spreads whoever is left across the open gathering jobs by need.
   function autoAssignIdle(state) {
-    const priority = ["farmer","fisherman","lumberjack","builder","miner","trader","blacksmith","carpenter","militia","teacher","herbalist","administrator"];
     let assigned = 0;
-    for (const jobId of priority) {
-      let idle = idleCitizens(state);
-      while (jobCapacityUsed(state, jobId) < jobCapacityMax(state, jobId) && idle.length > 0) {
-        const c = idle.shift();
-        assignJob(state, c.id, jobId);
+    const r = state.resources;
+    const fill = (jobId, limit) => {
+      const max = Math.min(jobCapacityMax(state, jobId), limit === undefined ? 999 : limit);
+      const idle = idleCitizens(state);
+      while (jobCapacityUsed(state, jobId) < max && idle.length > 0) {
+        assignJob(state, idle.shift().id, jobId);
         assigned++;
       }
+    };
+    // 1. Food before anything else, but only as many hands as the settlement needs:
+    //    one food worker feeds about eleven people over a year (winter included),
+    //    plus extra while the stores are low. Filling every farm slot regardless left
+    //    nobody to cut wood once the granary was full.
+    const pop = population(state);
+    const foodWorkers = () => citizensInJob(state, "farmer").length + citizensInJob(state, "fisherman").length;
+    const foodTarget = Math.ceil(pop / 11) + 1 + (r.food < pop * 2 ? 2 : 0);
+    fill("farmer", citizensInJob(state, "farmer").length + Math.max(0, foodTarget - foodWorkers()));
+    fill("fisherman", citizensInJob(state, "fisherman").length + Math.max(0, foodTarget - foodWorkers()));
+    // 1b. Keep a core of woodcutters and a mason: nearly everything is built from them.
+    const workers = livingCitizens(state).filter(c => c.age >= 12).length;
+    fill("lumberjack", Math.max(2, Math.round(workers * 0.15)));
+    fill("mason", 1);
+    // 2. Building jobs, skipping those whose inputs the settlement can't supply.
+    const hasHerbs = r.herbs >= 3 || citizensInJob(state, "herbalist").length > 0;
+    const staffed = [
+      ["trader", true], ["tanner", true], ["miner", true],
+      ["blacksmith", r.iron >= 2 || citizensInJob(state, "miner").length > 0],
+      ["carpenter", r.wood >= 20], ["administrator", true], ["teacher", true], ["scribe", true],
+      ["innkeeper", true], ["caravan_master", true], ["guard", true], ["archer", true], ["militia", true],
+      ["physician", hasHerbs], ["alchemist", hasHerbs], ["brewer", r.food >= population(state)],
+      ["tax_collector", r.stability >= 40]
+    ];
+    for (const [jobId, ok] of staffed) if (ok) fill(jobId);
+    // 3. Whoever is left gathers, going to whichever open job is most short-handed
+    //    for what the settlement currently lacks.
+    const anyConstruction = state.grid.some(t => t.constructing);
+    const weights = {
+      lumberjack: r.wood > 400 ? 1 : 3,
+      mason: r.stone > 300 ? 1 : 2,
+      builder: anyConstruction ? 1 : 0,
+      herbalist: r.herbs < 25 && citizensInJob(state, "herbalist").length < 2 ? 1 : 0
+    };
+    let idle = idleCitizens(state);
+    while (idle.length > 0) {
+      let best = null, bestScore = Infinity;
+      for (const jobId in weights) {
+        if (!weights[jobId]) continue;
+        const score = (citizensInJob(state, jobId).length + 1) / weights[jobId];
+        if (score < bestScore) { bestScore = score; best = jobId; }
+      }
+      if (!best) break;
+      if (best === "herbalist" && citizensInJob(state, "herbalist").length >= 2) { weights.herbalist = 0; continue; }
+      assignJob(state, idle.shift().id, best);
+      assigned++;
     }
     return assigned;
   }
@@ -573,8 +624,17 @@ const GameEngine = (function () {
       let seasonMult = 1;
       if (job.seasonal) seasonMult = SEASON_FOOD_MULT[season];
       const buildingMult = jobYieldMult(state, jobId);
+      // Workers who need inputs (blacksmiths' iron, carpenters' wood, physicians'
+      // herbs) only work as far as the stores allow. Without this the stores went
+      // negative and the workers kept producing from nothing.
+      let inputShare = 1;
+      for (const res in (job.consumes || {})) {
+        const need = job.consumes[res] * effectiveWorkers;
+        const have = Math.max(0, (state.resources[res] || 0) + (totals[res] || 0));
+        if (need > 0) inputShare = Math.min(inputShare, have / need);
+      }
       for (const res in (job.produces || {})) {
-        let amount = job.produces[res] * effectiveWorkers * seasonMult * buildingMult;
+        let amount = job.produces[res] * effectiveWorkers * seasonMult * buildingMult * inputShare;
         if (res === "food") {
           const { mult: fmult } = techMult(state, "farmYieldMult");
           const { mult: kfmult } = kingdomMult(state, "farmYieldMult");
@@ -599,7 +659,7 @@ const GameEngine = (function () {
         totals[res] = (totals[res] || 0) + amount;
       }
       for (const res in (job.consumes || {})) {
-        const amount = job.consumes[res] * effectiveWorkers;
+        const amount = job.consumes[res] * effectiveWorkers * inputShare;
         totals[res] = (totals[res] || 0) - amount;
       }
       if (job.sideEffect) {
@@ -614,7 +674,17 @@ const GameEngine = (function () {
     const { flat: stabDrift } = kingdomMult(state, "stabilityDrift");
     const { flat: stabEdict } = edictMult(state, "stabilityFlat");
     const adjStab = cap.adjacencyStabilityFlat || 0;
-    state.resources.stability = clamp(round2(state.resources.stability + stabFlat + stabDrift + stabEdict + adjStab), 0, 100);
+    // Buildings' own monthly stability and influence (chapel, well, better houses, the
+    // keep's upgrades). These were listed on the buildings but never actually applied.
+    let bStab = 0, bInf = 0;
+    for (const t of state.grid) {
+      const b = t.building && D.BUILDINGS[t.building];
+      if (!b || !b.effect) continue;
+      bStab += b.effect.stability || 0;
+      bInf += b.effect.influence || 0;
+    }
+    if (bInf) state.resources.influence = round2((state.resources.influence || 0) + bInf);
+    state.resources.stability = clamp(round2(state.resources.stability + stabFlat + stabDrift + stabEdict + adjStab + bStab), 0, 100);
     return totals;
   }
 
@@ -1110,11 +1180,36 @@ const GameEngine = (function () {
     return scaled;
   }
 
+  // What an event option would take from the stores (after scaling), or null if free.
+  // Effects used to be clamped at zero, so a choice like "Restore the shrine (-12
+  // stone)" cost nothing at all when the stone store was empty and still paid out.
+  function eventOptionShortfall(state, opt) {
+    if (!opt || opt.combatCheck) return null;
+    const eff = scaleEventEffect(state, opt.effect);
+    const missing = [];
+    for (const k in eff) {
+      const info = D.RESOURCE_INFO[k];
+      if (!info || info.max || typeof eff[k] !== "number" || eff[k] >= 0) continue;
+      if ((state.resources[k] || 0) < -eff[k]) missing.push(k);
+    }
+    return missing.length ? missing : null;
+  }
+  // An option is affordable unless it costs more than the stores hold. If somehow
+  // nothing is affordable, every option is allowed so the player can never be stuck.
+  function eventOptionAffordable(state, optionIndex) {
+    if (!state.activeEvent) return false;
+    const def = D.LOCAL_EVENTS.find(e => e.id === state.activeEvent.id);
+    if (!def) return true;
+    if (def.options.every(o => eventOptionShortfall(state, o))) return true;
+    return !eventOptionShortfall(state, def.options[optionIndex]);
+  }
+
   function resolveEvent(state, optionIndex) {
     if (!state.activeEvent) return { ok: false, reason: "No active event." };
     const def = D.LOCAL_EVENTS.find(e => e.id === state.activeEvent.id);
     const opt = def.options[optionIndex];
     if (!opt) return { ok: false, reason: "Invalid option." };
+    if (!eventOptionAffordable(state, optionIndex)) return { ok: false, reason: "The stores can't cover that choice." };
     let combatWon = null;
     if (opt.combatCheck) {
       combatWon = resolveEventCombat(state, opt.combatCheck);
@@ -1427,7 +1522,7 @@ const GameEngine = (function () {
     militaryStrength, legacyScore,
     saveGame, loadGame, hasSave, deleteSave,
     tileAt, isRuinTile, builtTiles, adjacencyBonusForTile, previewAdjacency,
-    toggleEdict, getFactionRelation, previewCombatChance, totalUpkeep, resourceSoftCap, factionActionCost
+    toggleEdict, getFactionRelation, eventOptionShortfall, eventOptionAffordable, previewCombatChance, totalUpkeep, resourceSoftCap, factionActionCost
   };
 })();
 

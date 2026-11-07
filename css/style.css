@@ -245,6 +245,7 @@ select.job-select {
   font-size: 13px; cursor: pointer; font-family: var(--font-body);
 }
 .option-btn:active { background: var(--panel-3); }
+.option-btn:disabled { opacity: .5; cursor: not-allowed; }
 .modal-close { position: sticky; top: 0; float: right; background: none; border: none; color: var(--ink-dim); font-size: 20px; cursor: pointer; }
 
 /* ---------- BOTTOM NAV ---------- */

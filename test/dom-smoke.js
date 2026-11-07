@@ -176,7 +176,7 @@ try {
   for (let i = 0; i < 30; i++) {
     const s = window.UI.getState();
     if (s.activeEvent) {
-      const optBtn = doc.querySelector(".option-btn");
+      const optBtn = doc.querySelector(".option-btn:not([disabled])");
       if (optBtn) click(optBtn);
     }
     click(doc.getElementById("turnBtn"));

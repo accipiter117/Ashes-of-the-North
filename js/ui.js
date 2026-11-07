@@ -121,7 +121,7 @@ const UI = (function () {
   function terrainIcon(t) {
     if (t.building) {
       const b = D.BUILDINGS[t.building];
-      if (b.ruin) return "⛔";
+      if (b.ruin) return "🏚";
       if (b.effect && b.effect.housing) return "🏠";
       if (t.building.startsWith("farm")) return "🌾";
       if (t.building === "dock") return "🎣";
@@ -760,12 +760,15 @@ const UI = (function () {
           const pct = Math.round(E.previewCombatChance(state, o.combatCheck) * 100);
           oddsTag = ' <span class="tag' + (pct >= 55 ? " good" : (pct <= 35 ? " bad" : "")) + '">⚔ ' + pct + '% odds</span>';
         }
-        return '<button class="option-btn" data-opt="' + i + '">' + o.text + oddsTag + '</button>';
+        const short = E.eventOptionAffordable(state, i) ? null : E.eventOptionShortfall(state, o);
+        const shortTag = short ? ' <span class="tag bad">not enough ' + short.map(k => D.RESOURCE_INFO[k].name.toLowerCase()).join(", ") + '</span>' : "";
+        return '<button class="option-btn" data-opt="' + i + '"' + (short ? " disabled" : "") + '>' + o.text + oddsTag + shortTag + '</button>';
       }).join("") +
       '</div></div>';
     root.querySelectorAll("[data-opt]").forEach(btn => {
       btn.addEventListener("click", () => {
-        E.resolveEvent(state, parseInt(btn.dataset.opt));
+        const res = E.resolveEvent(state, parseInt(btn.dataset.opt));
+        if (!res.ok) { toast(res.reason); return; }
         root.innerHTML = "";
         E.saveGame(state);
         renderAll();
