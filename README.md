@@ -80,6 +80,19 @@ explore → respond to events → survive the season → develop → expand. One
 - Mobile-first UI: bottom tab navigation, a persistent scrollable resource bar, a
   fixed one-tap "advance month" control, touch-sized targets throughout, and a
   settlement map you pan horizontally rather than pinch-zoom
+- Needs and the voices of the town: households expect more as the settlement grows
+  (food and shelter in a camp; safety from a hamlet; faith and health from a village;
+  ale and a market from a town; furniture in a city), and how well those are met,
+  plus how each of seven interest groups (farmers, labourers, merchants, artisans,
+  soldiers, clergy, scholars) feels about the elder, sets every resident's
+  happiness. Happiness sets the work pace, births, stability and newcomers; misery
+  sends families away. Each group has its own wants and likes or resents particular
+  edicts; approval makes its members work harder or slower, and a group under 25
+  petitions with a choice of answers. Goods matter: soldiers fight at half strength
+  without a weapon each, labourers and artisans slow down without tools, and both
+  wear out; brewers make ale and carpenters furniture for the homes that want them.
+  New buildings for this: Wayside Shrine (raise any of them into a chapel),
+  Brewhouse and Joiner's Shop
 - A living village: the map is painted top-down with the roofs off (walls, floors,
   beds, forges, market stalls, crop rows) and every resident walks a daily routine
   that follows their job: out to the fields, forest, mine, dock or workshop at dawn,

@@ -1831,7 +1831,7 @@ const GameEngine = (function () {
     militaryStrength, legacyScore,
     saveGame, loadGame, hasSave, deleteSave,
     tileAt, isRuinTile, builtTiles, adjacencyBonusForTile, previewAdjacency,
-    needsReport, groupReport, armedFraction, toolCoverage, settlementHappiness, groupApproval,
+    needsReport, groupReport, scaleEventEffect, armedFraction, toolCoverage, settlementHappiness, groupApproval,
     toggleEdict, getFactionRelation, eventOptionShortfall, eventOptionAffordable, previewCombatChance, totalUpkeep, resourceSoftCap, factionActionCost
   };
 })();

@@ -320,7 +320,7 @@ const UI = (function () {
     for (const g of groups) {
       const trend = g.trend > 0 ? ' <span class="trend up">▲</span>' : g.trend < 0 ? ' <span class="trend down">▼</span>' : '';
       const lines = [];
-      if (g.grievance) lines.push('Wants ' + g.grievance + '.');
+      if (g.grievance) lines.push('Most wanted now: ' + g.grievance + '.');
       else if (g.pleasedBy) lines.push('Pleased with ' + g.pleasedBy + '.');
       if (g.edictsHated.length) lines.push('Resents ' + g.edictsHated.join(", ") + '.');
       if (g.edictsLiked.length) lines.push('Welcomes ' + g.edictsLiked.join(", ") + '.');
@@ -850,8 +850,18 @@ const UI = (function () {
           oddsTag = ' <span class="tag' + (pct >= 55 ? " good" : (pct <= 35 ? " bad" : "")) + '">⚔ ' + pct + '% odds</span>';
         }
         const short = E.eventOptionAffordable(state, i) ? null : E.eventOptionShortfall(state, o);
+        // petitions say what they cost and how the group will take it
+        let terms = "";
+        if (o.effect && o.effect.approval) {
+          const eff = E.scaleEventEffect(state, o.effect);
+          const bits = [];
+          for (const k in eff) if (D.RESOURCE_INFO[k] && !D.RESOURCE_INFO[k].max && typeof eff[k] === "number") bits.push((eff[k] > 0 ? "+" : "") + Math.round(eff[k]) + " " + D.RESOURCE_INFO[k].icon);
+          for (const k of ["stability", "reputation"]) if (o.effect[k]) bits.push((o.effect[k] > 0 ? "+" : "") + o.effect[k] + " " + D.RESOURCE_INFO[k].name.toLowerCase());
+          for (const g in o.effect.approval) bits.push(groupName(g) + " " + (o.effect.approval[g] > 0 ? "+" : "") + o.effect.approval[g]);
+          terms = '<div class="sub" style="margin-top:3px">' + bits.join(" · ") + '</div>';
+        }
         const shortTag = short ? ' <span class="tag bad">not enough ' + short.map(k => D.RESOURCE_INFO[k].name.toLowerCase()).join(", ") + '</span>' : "";
-        return '<button class="option-btn" data-opt="' + i + '"' + (short ? " disabled" : "") + '>' + o.text + oddsTag + shortTag + '</button>';
+        return '<button class="option-btn" data-opt="' + i + '"' + (short ? " disabled" : "") + '>' + o.text + oddsTag + shortTag + terms + '</button>';
       }).join("") +
       '</div></div>';
     root.querySelectorAll("[data-opt]").forEach(btn => {
