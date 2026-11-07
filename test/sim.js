@@ -209,6 +209,106 @@ function quietGame() {
   console.log("Needs check OK: old saves gain needs and interest groups");
 })();
 
+// ================= BATTLES ON THE MAP =================
+function battleTown() {
+  const s = Engine.newGame("B");
+  s.activeEvent = null;
+  const put = (x, y, id) => { Engine.tileAt(s.grid, x, y).building = id; };
+  put(7, 5, "house"); put(8, 5, "house"); put(9, 8, "granary"); put(12, 8, "guardhouse"); put(5, 3, "farm"); put(2, 4, "dock");
+  for (const c of s.citizens) c.job = null;
+  return s;
+}
+
+// Monsters catch people working outside before they reach shelter, and those people really die.
+(function testMonstersKillRealPeople() {
+  let killed = 0, consistent = true;
+  for (let i = 0; i < 20; i++) {
+    const s = battleTown();
+    const idle = Engine.idleCitizens(s);
+    for (let k = 0; k < 3; k++) Engine.assignJob(s, idle[k].id, "fisherman");
+    for (let k = 3; k < 6; k++) Engine.assignJob(s, idle[k].id, "farmer");
+    const before = Engine.population(s);
+    Engine.startBattle(s, { kind: "drowner", from: "river", count: 4, mode: "sally" });
+    Engine.finishBattleNow(s);
+    const dead = s.battle.deaths.length;
+    killed += dead;
+    if (Engine.population(s) !== before - dead) consistent = false;
+    for (const d of s.battle.deaths) if (s.citizens.find(c => c.id === d.id).alive) consistent = false;
+  }
+  assert(killed > 0, "undefended fishermen and farmers should sometimes be caught by drowners");
+  assert(consistent, "every death shown in a battle is a citizen who really died");
+  console.log("Battle check OK: monsters catch people outdoors, and the dead are really dead (" + killed + " in 20 attacks)");
+})();
+
+// Raiders carry off real stores; what a fallen raider carried is recovered.
+(function testRaidersLootRealStores() {
+  let lootSeen = false, balanced = true;
+  for (let i = 0; i < 20; i++) {
+    const s = battleTown();
+    s.resources.food = 100; s.resources.coin = 60;
+    const before = s.resources.food + s.resources.coin;
+    Engine.startBattle(s, { kind: "raider", from: "east", count: 4, mode: "sally" });
+    Engine.finishBattleNow(s);
+    const b = s.battle, after = s.resources.food + s.resources.coin;
+    if (b.looted.food + b.looted.coin > 1) lootSeen = true;
+    if (Math.abs((before - after) - (b.looted.food + b.looted.coin)) > 0.05) balanced = false;
+  }
+  assert(lootSeen, "undefended stores should be looted");
+  assert(balanced, "stores lost must equal what the raiders got away with (recovered loot comes back)");
+  console.log("Battle check OK: raiders carry off real stores, and recovered loot comes back");
+})();
+
+// Burned buildings stop working until rebuilt; rebuilding restores them.
+(function testBurnAndRebuild() {
+  const s = battleTown();
+  const t = Engine.tileAt(s.grid, 7, 5);
+  const housingBefore = Engine.capacities(s).housing;
+  t.burnt = true;
+  assert(Engine.capacities(s).housing === housingBefore - 4, "a burned house shelters nobody");
+  s.resources.wood = 100; s.resources.stone = 100;
+  const r = Engine.queueRepair(s, 7, 5);
+  assert(r.ok, "a burned building can be rebuilt: " + r.reason);
+  for (let i = 0; i < 3 && t.burnt; i++) { s.activeEvent = null; Engine.advanceTurn(s); }
+  assert(!t.burnt && Engine.capacities(s).housing >= housingBefore, "rebuilding restores the house");
+  console.log("Battle check OK: burned buildings stop working until rebuilt");
+})();
+
+// Soldiers with weapons and a tower beat a small raid more often than nobody at all.
+(function testDefenceMatters() {
+  const rate = (soldiers) => {
+    let won = 0;
+    for (let i = 0; i < 30; i++) {
+      const s = battleTown();
+      if (soldiers) {
+        Engine.tileAt(s.grid, 12, 8).building = "barracks"; Engine.tileAt(s.grid, 9, 6).building = "watchtower";
+        const idle = Engine.idleCitizens(s); let n = 0;
+        for (const j of ["militia", "guard", "archer", "militia", "guard", "archer"]) if (Engine.assignJob(s, idle[n].id, j).ok) n++;
+        s.resources.weapons = 10;
+      }
+      s.resources.food = 100; s.resources.coin = 50;
+      Engine.startBattle(s, { kind: "raider", from: "east", count: 4, mode: "sally" });
+      Engine.finishBattleNow(s);
+      if (s.battle.outcome === "won") won++;
+    }
+    return won / 30;
+  };
+  const none = rate(false), guarded = rate(true);
+  assert(guarded > none + 0.4, "a defended settlement should beat raiders far more often: none=" + none + " guarded=" + guarded);
+  console.log("Battle check OK: defence decides battles (undefended " + none.toFixed(2) + ", guarded " + guarded.toFixed(2) + ")");
+})();
+
+// A battle left running when the month turns is finished first, and saves mid-battle round-trip.
+(function testBattleAcrossMonthAndSave() {
+  const s = battleTown();
+  Engine.startBattle(s, { kind: "nekker", from: "forest", count: 3, mode: "sally" });
+  Engine.tickBattle(s, 2);
+  const copy = JSON.parse(JSON.stringify(s));
+  assert(Engine.battleActive(copy), "a battle survives a save and load");
+  Engine.tickBattle(copy, 1);
+  assert(Engine.advanceTurn(s).ok && !Engine.battleActive(s) && s.battle.outcome, "the month turning finishes the battle");
+  console.log("Battle check OK: battles survive saving and finish when the month turns");
+})();
+
 // --- Regression test: building-tier yield multipliers must actually apply ---
 // (farm2/farm3/workshop2 carry an `effect.yieldMult`; a prior bug compared building
 // `chain` arrays with `===`, which are always different object references even for

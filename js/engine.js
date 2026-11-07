@@ -552,6 +552,7 @@ const GameEngine = (function () {
     const t = tileAt(state.grid, x, y);
     if (!t || !t.building) return { ok: false, reason: "Nothing here to upgrade." };
     if (t.constructing) return { ok: false, reason: "Already under construction." };
+    if (t.burnt) return { ok: false, reason: "Rebuild it before improving it." };
     const cur = D.BUILDINGS[t.building];
     const chain = cur.chain;
     const idx = chain.indexOf(t.building);
@@ -1553,7 +1554,8 @@ const GameEngine = (function () {
     if (b.burnt.length) what.push(b.burnt.length + " building" + (b.burnt.length > 1 ? "s" : "") + " burned");
     const dead = b.deaths.length;
     if (dead) what.push(dead + " dead");
-    b.summary = (won ? "The " + b.label.toLowerCase() + " were driven off" : "The " + b.label.toLowerCase() + " got the better of the defence") + (what.length ? ": " + what.join(", ") + "." : ".");
+    const who = /^(the|house) /i.test(b.label) ? b.label : "The " + b.label.toLowerCase();
+    b.summary = (won ? who + " were driven off" : who + " got the better of the defence") + (what.length ? ": " + what.join(", ") + "." : ".");
     // an event's own consequences follow the battle
     const def = b.eventId ? eventDef(b.eventId) : null;
     const cc = def && def.options[b.optionIndex] && def.options[b.optionIndex].combatCheck;

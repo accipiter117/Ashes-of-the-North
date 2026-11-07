@@ -96,6 +96,16 @@ const VillageView = (function () {
   let staticKey = "";
   let onClockLabel = null, lastLabel = "";
   let dayCount = 0;
+  let clockFn = null;        // the game's own clock, when the UI runs real time
+  let simNow = 0;            // seconds of village life (stands still while paused)
+  let corpses = [];          // the fallen, where they fell
+  let seenDeaths = {};       // battle id -> deaths already shown
+  const ROOFED = ["house", "workshop", "brewhouse", "joinery", "guardhouse", "hall", "school"];
+  function isRoofed(t) {
+    if (!t || !t.building) return false;
+    const r = root(t.building), tier = (D.BUILDINGS[t.building] || {}).tier || 0;
+    return ROOFED.includes(r) || ((r === "keep" || r === "shrine" || r === "storehouse") && tier >= 1);
+  }
 
   // ---------------------------------------------------------------
   // MAP FACTS
@@ -137,7 +147,7 @@ const VillageView = (function () {
     const homes = [];
     for (const t of near(by.house)) {
       const n = (D.BUILDINGS[t.building].effect || {}).housing || 4;
-      for (let i = 0; i < n; i++) homes.push({ x: t.x + 0.3 + (i % 3) * 0.2, y: t.y + 0.35 + Math.floor(i / 3) % 3 * 0.18, tile: t });
+      for (let i = 0; i < n; i++) homes.push({ x: t.x + 0.42 + (i % 3) * 0.08, y: t.y + 0.78, tile: t });
     }
     const pop = E.population(game);
     const unhoused = Math.max(0, pop - homes.length);
@@ -289,6 +299,9 @@ const VillageView = (function () {
     if (!list || !list.length) return null;
     return list[Math.floor(hash(p.seed * 1e6, salt || 7) * list.length) % list.length];
   }
+  // where to stand at a building: in front of a roofed one (or just inside its door)
+  function yardSpot(t) { return { x: t.x + 0.2 + rnd() * 0.6, y: t.y + 0.72 + rnd() * 0.2 }; }
+  const INDOOR_JOBS = ["administrator", "scribe", "tax_collector", "teacher", "physician", "alchemist", "brewer", "tanner"];
   function within(t, pad) {
     pad = pad === undefined ? 0.22 : pad;
     return { x: t.x + pad + rnd() * (1 - pad * 2), y: t.y + pad + rnd() * (1 - pad * 2) };
@@ -323,13 +336,19 @@ const VillageView = (function () {
       pose = p.type === "soldier" ? "guard" : (p.type === "clerk" || p.type === "scholar") ? "sit" : "stand";
     }
     if (!t) { const a = rnd() * Math.PI * 2, r = 0.6 + rnd() * 1.1; return { x: world.commons.x + Math.cos(a) * r * 1.3, y: world.commons.y + Math.sin(a) * r, pose: "sit" }; }
-    const s = within(t);
+    const s = isRoofed(t) ? yardSpot(t) : within(t);
+    if (isRoofed(t) && INDOOR_JOBS.includes(j)) { s.x = t.x + 0.5; s.y = t.y + 0.78; s.inside = true; }
     s.pose = pose; s.tile = t;
     return s;
   }
 
   // What everyone should be doing at this time of day.
+  function battleOn() { return !!(game && game.battle && !game.battle.outcome); }
   function wantedActivity(p, phase) {
+    if (battleOn()) {
+      if (game.battle.defenders.some(d => d.id === p.id)) return "battle";
+      return "home";   // everyone else runs for shelter
+    }
     if (p.child) {
       if (phase < 0.24 || phase > 0.84) return "home";
       return "play";
@@ -344,6 +363,7 @@ const VillageView = (function () {
   function destFor(p, act) {
     const c = world.commons;
     if (act === "home") return { x: p.home.x, y: p.home.y, pose: "sleep" };
+    if (act === "battle") return { x: p.x, y: p.y, pose: "battle" };
     if (act === "work") return workSpot(p);
     if (act === "meal") { const a = rnd() * Math.PI * 2, r = 0.55 + rnd() * 0.5; return { x: c.x + Math.cos(a) * r, y: c.y + Math.sin(a) * r * 0.7, pose: "sit" }; }
     if (act === "watch") { const i = Math.floor(rnd() * 4); const q = world.patrol[i]; return { x: q.x, y: q.y, pose: "walk", watch: i }; }
@@ -358,7 +378,10 @@ const VillageView = (function () {
     if (roll < 0.25 && chapel) t = chapel;
     else if (roll < 0.5 && by.market) t = pick(by.market, p, 13);
     else if (roll < 0.65 && by.well) t = by.well[0];
-    if (t) { const s = within(t, 0.25); s.pose = "stand"; return s; }
+    if (t) {
+      if (isRoofed(t)) return { x: t.x + 0.5, y: t.y + 0.8, pose: "stand", inside: true };   // in to pray
+      const s = within(t, 0.25); s.pose = "stand"; return s;
+    }
     return { x: c.x + (rnd() - 0.5) * 1.8, y: c.y + (rnd() - 0.5) * 1.2, pose: "sit" };
   }
 
@@ -385,7 +408,10 @@ const VillageView = (function () {
       if (p.act === "work" && CARRY[p.job]) p.carry = CARRY[p.job];
       if (want === "work") p.carry = null;
       p.act = want;
-      p.visible = true;
+      p.visible = want !== "battle";
+      if (want === "battle") { p.path = []; p.dest = { pose: "battle" }; return; }
+      // running from danger
+      p.hurry = battleOn() ? 1.8 : 1;
       goTo(p, destFor(p, want));
       p.nextShuffle = now + 6 + rnd() * 10;
     }
@@ -394,7 +420,7 @@ const VillageView = (function () {
       const dx = q.x - p.x, dy = q.y - p.y, d = Math.hypot(dx, dy);
       const t = tileAt(Math.floor(p.x), Math.floor(p.y));
       const slow = t && t.terrain === "forest" && !t.building ? 0.75 : (t && t.terrain === "road" ? 1.2 : 1);
-      const step = p.speed * slow * dt * (p.child ? 1.15 : 1) * (p.act === "play" ? 0.9 : 1);
+      const step = p.speed * slow * dt * (p.child ? 1.15 : 1) * (p.act === "play" ? 0.9 : 1) * (p.hurry || 1);
       if (Math.abs(dx) > 0.01) p.facing = dx > 0 ? 1 : -1;
       if (d <= step) { p.x = q.x; p.y = q.y; p.path.shift(); }
       else { p.x += dx / d * step; p.y += dy / d * step; }
@@ -403,7 +429,10 @@ const VillageView = (function () {
     }
     p.moving = false;
     const pose = p.dest ? p.dest.pose : "stand";
-    if (pose === "sleep") { p.visible = false; p.carry = null; return; }
+    if (pose === "battle") { p.visible = false; return; }
+    if (pose === "sleep" || (p.dest && p.dest.inside)) { p.visible = false; if (pose === "sleep") p.carry = null; p.hurry = 1;
+      if (p.dest && p.dest.inside && now > p.nextShuffle && p.act !== "home") { p.nextShuffle = now + 10 + rnd() * 15; }
+      return; }
     // drop the load at the fire or at home
     if (p.carry && (p.act === "meal" || p.act === "leisure")) p.carry = null;
     // move on now and then: the next row of crops, another tree, the next corner of the watch
@@ -598,7 +627,180 @@ const VillageView = (function () {
     g.fillStyle = "rgba(20,15,10,0.35)"; g.beginPath(); g.ellipse(t.x + 0.45, t.y + 0.55, 0.18, 0.12, 0.3, 0, 7); g.fill();
   }
 
+  // ----- roofed buildings, seen from above -----
+  // A pitched roof with its ridge running across: the upper slope catches the
+  // late sun (light from the upper right), the lower slope is in shade, the eaves
+  // overhang, and a strip of front wall with a door and windows shows beneath.
+  const ROOFS = {
+    thatch:  { hi: "#c9a85e", lo: "#9c7d3f", line: "rgba(80,58,24,0.45)", edge: "#6e5528" },
+    shingle: { hi: "#8a5a3a", lo: "#64402a", line: "rgba(30,18,10,0.45)", edge: "#3e2818" },
+    slate:   { hi: "#6f7782", lo: "#4e5560", line: "rgba(20,24,30,0.5)", edge: "#2c3138" },
+    tile:    { hi: "#a5503a", lo: "#7a3828", line: "rgba(40,14,8,0.45)", edge: "#4a2016" }
+  };
+  function roof(g, x, y, w, h, kind, o) {
+    o = o || {};
+    const R = ROOFS[kind] || ROOFS.thatch;
+    const wallH = Math.min(0.12, h * 0.2);
+    // shadow falls down and to the left
+    g.fillStyle = "rgba(0,0,0,0.32)"; g.fillRect(x - 0.07, y + 0.07, w + 0.02, h + 0.02);
+    // front wall, door and windows below the eaves
+    const wy = y + h - wallH;
+    g.fillStyle = o.wall || (kind === "slate" ? STONE : WOOD); g.fillRect(x + 0.03, wy, w - 0.06, wallH);
+    g.strokeStyle = INK; g.lineWidth = 0.016; g.strokeRect(x + 0.03, wy, w - 0.06, wallH);
+    g.fillStyle = "#2a1c10"; g.fillRect(x + w / 2 - 0.05, wy + 0.01, 0.1, wallH - 0.01);
+    if (w > 0.5) { g.fillStyle = "#e8c070"; g.fillRect(x + w * 0.2, wy + wallH * 0.3, 0.06, wallH * 0.4); g.fillRect(x + w * 0.8 - 0.06, wy + wallH * 0.3, 0.06, wallH * 0.4); }
+    // the two slopes
+    const rh = h - wallH, mid = y + rh / 2;
+    g.fillStyle = R.hi; g.fillRect(x, y, w, rh / 2);
+    g.fillStyle = R.lo; g.fillRect(x, mid, w, rh / 2);
+    g.strokeStyle = R.line; g.lineWidth = 0.012;
+    g.beginPath();
+    if (kind === "thatch") {
+      for (let i = 0; i <= w * 28; i++) { const lx = x + i / 28; g.moveTo(lx, y + 0.01); g.lineTo(lx + 0.01, mid - 0.01); g.moveTo(lx, mid + 0.01); g.lineTo(lx - 0.01, y + rh - 0.01); }
+    } else {
+      const rows = Math.max(2, Math.round(rh / 0.06));
+      for (let r = 1; r < rows; r++) { const ly = y + r * rh / rows; g.moveTo(x, ly); g.lineTo(x + w, ly); }
+      for (let r = 0; r < rows; r++) { const off = (r % 2) * 0.04; for (let cx = x + off; cx < x + w; cx += 0.08) { const ly = y + r * rh / rows; g.moveTo(cx, ly); g.lineTo(cx, ly + rh / rows); } }
+    }
+    g.stroke();
+    // ridge and eaves
+    g.strokeStyle = R.edge; g.lineWidth = 0.03; g.beginPath(); g.moveTo(x, mid); g.lineTo(x + w, mid); g.stroke();
+    g.strokeStyle = INK; g.lineWidth = 0.018; g.strokeRect(x, y, w, rh);
+    if (kind === "thatch") { g.fillStyle = "rgba(255,240,200,0.12)"; g.fillRect(x, y, w, 0.03); }
+    if (o.chimney) {
+      const cx = x + w * (o.chimneyX || 0.72), cy = y + rh * 0.18;
+      box(g, cx, cy, 0.09, 0.09, kind === "slate" ? STONE_DARK : "#6a4e3a");
+      g.fillStyle = "#1a1410"; g.fillRect(cx + 0.02, cy + 0.02, 0.05, 0.05);
+    }
+    if (o.snow) { g.fillStyle = "rgba(236,242,246,0.82)"; g.fillRect(x + 0.01, y + 0.01, w - 0.02, rh / 2 - 0.01); g.fillStyle = "rgba(220,230,236,0.55)"; g.fillRect(x + 0.01, mid + 0.01, w - 0.02, rh / 2 - 0.03); }
+    return { x, y, w, h, wallTop: wy };
+  }
+  // A round tower with a conical roof.
+  function roundTower(g, cx, cy, r, kind, snow) {
+    const R = ROOFS[kind] || ROOFS.slate;
+    g.fillStyle = "rgba(0,0,0,0.32)"; g.beginPath(); g.arc(cx - 0.06, cy + 0.06, r, 0, 7); g.fill();
+    circle(g, cx, cy, r, STONE);
+    const grd = g.createRadialGradient(cx + r * 0.3, cy - r * 0.3, 0, cx, cy, r * 0.85);
+    grd.addColorStop(0, R.hi); grd.addColorStop(1, R.lo);
+    g.fillStyle = grd; g.beginPath(); g.arc(cx, cy, r * 0.85, 0, 7); g.fill();
+    g.strokeStyle = R.line; g.lineWidth = 0.012; g.beginPath();
+    for (let i = 0; i < 12; i++) { const a = i / 12 * Math.PI * 2; g.moveTo(cx, cy); g.lineTo(cx + Math.cos(a) * r * 0.85, cy + Math.sin(a) * r * 0.85); }
+    g.stroke();
+    g.strokeStyle = INK; g.lineWidth = 0.018; g.beginPath(); g.arc(cx, cy, r, 0, 7); g.stroke();
+    circle(g, cx, cy, 0.03, R.edge);
+    if (snow) { g.fillStyle = "rgba(236,242,246,0.7)"; g.beginPath(); g.arc(cx, cy, r * 0.8, Math.PI, Math.PI * 1.9); g.lineTo(cx, cy); g.fill(); }
+  }
+  function barrel(g, x, y) { circle(g, x, y, 0.055, "#7a5230"); g.strokeStyle = "#3a3a3a"; g.lineWidth = 0.01; g.beginPath(); g.arc(x, y, 0.038, 0, 7); g.stroke(); }
+  function banner(g, x, y, colour) {
+    g.strokeStyle = WOOD_DARK; g.lineWidth = 0.02; g.beginPath(); g.moveTo(x, y); g.lineTo(x, y - 0.22); g.stroke();
+    g.fillStyle = colour; g.beginPath(); g.moveTo(x, y - 0.22); g.lineTo(x + 0.14, y - 0.18); g.lineTo(x, y - 0.13); g.closePath(); g.fill();
+  }
+  function yard(g, x, y, w, h, colour) { g.fillStyle = colour || "rgba(120,100,70,0.55)"; g.fillRect(x, y, w, h); }
+
+  // Returns true when the building was drawn as a roofed building.
+  function drawRoofed(g, t, id, look) {
+    const b = D.BUILDINGS[id] || {};
+    const r = root(id), tier = b.tier || 0;
+    const { x, y } = t, snow = !!look.snow;
+    if (r === "house") {
+      const kind = ["thatch", "shingle", "slate"][tier] || "thatch";
+      const w = [0.66, 0.76, 0.84][tier], h = [0.56, 0.62, 0.68][tier];
+      const rx = x + (1 - w) / 2, ry = y + 0.12;
+      if (tier >= 1) yard(g, x + 0.08, y + 0.82, 0.84, 0.12, "rgba(110,90,60,0.35)");
+      roof(g, rx, ry, w, h, kind, { chimney: true, snow, chimneyX: 0.68 });
+      if (tier >= 1) { g.fillStyle = WOOD_DARK; for (let i = 0; i < 7; i++) g.fillRect(x + 0.08 + i * 0.13, y + 0.9, 0.03, 0.05); }
+      if (tier === 2) roof(g, rx + w - 0.22, ry + h - 0.08, 0.24, 0.24, "slate", { snow });
+      return true;
+    }
+    if (r === "workshop") {
+      yard(g, x + 0.05, y + 0.55, 0.9, 0.4);
+      roof(g, x + 0.1, y + 0.06, 0.8, 0.5, tier ? "slate" : "shingle", { chimney: true, snow, chimneyX: 0.8 });
+      // the forge and anvil stand out in the yard
+      box(g, x + 0.62, y + 0.66, 0.18, 0.14, "#4a3e36"); circle(g, x + 0.71, y + 0.73, 0.04, "#e07a2a", false);
+      g.fillStyle = "#3a3a3e"; g.beginPath(); g.moveTo(x + 0.32, y + 0.74); g.lineTo(x + 0.48, y + 0.74); g.lineTo(x + 0.44, y + 0.8); g.lineTo(x + 0.36, y + 0.8); g.closePath(); g.fill(); g.strokeStyle = INK; g.lineWidth = 0.014; g.stroke();
+      for (let i = 0; i < 3; i++) box(g, x + 0.1, y + 0.66 + i * 0.07, 0.16, 0.05, "#7a5a3a");
+      return true;
+    }
+    if (r === "brewhouse") {
+      yard(g, x + 0.05, y + 0.6, 0.9, 0.35);
+      roof(g, x + 0.1, y + 0.08, 0.8, 0.52, "shingle", { chimney: true, snow, chimneyX: 0.2 });
+      for (let i = 0; i < 4; i++) barrel(g, x + 0.2 + i * 0.15, y + 0.8);
+      return true;
+    }
+    if (r === "joinery") {
+      yard(g, x + 0.05, y + 0.6, 0.9, 0.35);
+      roof(g, x + 0.1, y + 0.08, 0.8, 0.52, "thatch", { snow });
+      for (let i = 0; i < 4; i++) box(g, x + 0.12, y + 0.66 + i * 0.05, 0.4, 0.04, i % 2 ? PLANK : "#a8845a");
+      box(g, x + 0.62, y + 0.7, 0.2, 0.05, "#6a4a2a"); g.fillStyle = "#6a4a2a"; g.fillRect(x + 0.64, y + 0.75, 0.02, 0.08); g.fillRect(x + 0.78, y + 0.75, 0.02, 0.08);
+      return true;
+    }
+    if (r === "guardhouse") {
+      yard(g, x + 0.05, y + 0.62, 0.9, 0.33, tier === 2 ? "rgba(190,165,110,0.6)" : undefined);
+      roof(g, x + 0.08, y + 0.08, tier ? 0.84 : 0.7, 0.54, "slate", { wall: STONE, snow, chimney: tier > 0, chimneyX: 0.15 });
+      banner(g, x + 0.86, y + 0.7, "#8a2a24");
+      g.strokeStyle = "#9a9a9a"; g.lineWidth = 0.018; g.beginPath();
+      for (let i = 0; i < 4; i++) { g.moveTo(x + 0.14 + i * 0.05, y + 0.66); g.lineTo(x + 0.14 + i * 0.05, y + 0.88); }
+      g.stroke();
+      if (tier === 2) { for (const dx of [0.45, 0.65]) { circle(g, x + dx, y + 0.8, 0.06, "#c8a860"); circle(g, x + dx, y + 0.8, 0.025, "#8a2a24"); } }
+      return true;
+    }
+    if (r === "keep" && tier >= 1) {
+      if (id === "watchtower") { roundTower(g, x + 0.5, y + 0.48, 0.36, "slate", snow); return true; }
+      // a square keep: battlements round a stone roof, corner towers
+      g.fillStyle = "rgba(0,0,0,0.32)"; g.fillRect(x - 0.02, y + 0.1, 0.98, 0.9);
+      box(g, x + 0.05, y + 0.05, 0.9, 0.9, STONE);
+      g.fillStyle = id === "manor" ? ROOFS.tile.lo : FLAGSTONE; g.fillRect(x + 0.15, y + 0.15, 0.7, 0.7);
+      if (id === "manor") roof(g, x + 0.16, y + 0.16, 0.68, 0.62, "tile", { wall: STONE, snow, chimney: true });
+      g.fillStyle = STONE_DARK;
+      for (let i = 0; i < 8; i++) { const f = 0.08 + i * 0.11; g.fillRect(x + f, y + 0.05, 0.06, 0.06); g.fillRect(x + f, y + 0.89, 0.06, 0.06); g.fillRect(x + 0.05, y + f, 0.06, 0.06); g.fillRect(x + 0.89, y + f, 0.06, 0.06); }
+      for (const [a, c] of [[0.1, 0.1], [0.9, 0.1], [0.1, 0.9], [0.9, 0.9]]) roundTower(g, x + a, y + c, 0.13, "slate", snow);
+      banner(g, x + 0.5, y + 0.45, "#2f5a8a");
+      return true;
+    }
+    if (r === "hall") {
+      roof(g, x + 0.06, y + 0.1, 0.88, 0.7, "tile", { wall: STONE, snow, chimney: true, chimneyX: 0.15 });
+      box(g, x + 0.42, y + 0.02, 0.16, 0.16, STONE); roundTower(g, x + 0.5, y + 0.1, 0.07, "slate", snow);
+      banner(g, x + 0.88, y + 0.92, "#2f5a8a");
+      return true;
+    }
+    if (r === "school") {
+      const kind = ["thatch", "shingle", "slate"][tier];
+      roof(g, x + 0.08, y + 0.08, 0.84, 0.62, kind, { snow, chimney: tier > 0 });
+      box(g, x + 0.3, y + 0.8, 0.4, 0.06, "#6a4a2a");
+      box(g, x + 0.8, y + 0.74, 0.12, 0.08, "#d8cfb8");
+      if (tier === 2) roundTower(g, x + 0.2, y + 0.3, 0.12, "slate", snow);
+      return true;
+    }
+    if (r === "shrine" && tier >= 1) {
+      // chapel: a long nave with a bell tower over the door
+      roof(g, x + 0.14, y + 0.06, 0.72, 0.74, tier >= 2 ? "slate" : "shingle", { wall: STONE, snow });
+      box(g, x + 0.4, y + 0.66, 0.2, 0.2, STONE);
+      roundTower(g, x + 0.5, y + 0.76, 0.09, tier >= 2 ? "slate" : "shingle", snow);
+      if (tier >= 2) for (const [a, c] of [[0.17, 0.3, "#3a5a9a"], [0.83, 0.3, "#9a3a3a"], [0.17, 0.5, "#c8a03a"], [0.83, 0.5, "#3a8a5a"]]) { g.fillStyle = c; g.fillRect(x + a - 0.02, y + c, 0.04, 0.08); }
+      return true;
+    }
+    if (r === "storehouse" && tier >= 1) {
+      roundTower(g, x + 0.42, y + 0.42, 0.34, "thatch", snow);
+      for (let i = 0; i < 4; i++) { g.fillStyle = "#c8b080"; g.beginPath(); g.ellipse(x + 0.6 + (i % 2) * 0.14, y + 0.78 + Math.floor(i / 2) * 0.1, 0.06, 0.045, 0, 0, 7); g.fill(); g.strokeStyle = INK; g.lineWidth = 0.012; g.stroke(); }
+      crate(g, x + 0.12, y + 0.8, 0.1);
+      return true;
+    }
+    return false;
+  }
+
+  // What a burned building leaves: blackened walls, fallen beams, ash.
+  function drawBurnt(g, t) {
+    const { x, y } = t;
+    g.fillStyle = "rgba(20,16,12,0.85)"; g.fillRect(x + 0.08, y + 0.1, 0.84, 0.74);
+    g.strokeStyle = "#1a120c"; g.lineWidth = 0.06; g.strokeRect(x + 0.1, y + 0.12, 0.8, 0.7);
+    g.strokeStyle = "#3a2a1c"; g.lineWidth = 0.035; g.beginPath();
+    g.moveTo(x + 0.15, y + 0.2); g.lineTo(x + 0.8, y + 0.7); g.moveTo(x + 0.75, y + 0.18); g.lineTo(x + 0.3, y + 0.75); g.moveTo(x + 0.2, y + 0.5); g.lineTo(x + 0.85, y + 0.45); g.stroke();
+    for (let i = 0; i < 6; i++) circle(g, x + 0.2 + hash(x, y, 600 + i) * 0.6, y + 0.2 + hash(x, y, 610 + i) * 0.55, 0.03, "rgba(90,80,70,0.8)", false);
+  }
+
   function drawBuilding(g, t, id, look) {
+    if (t.burnt && id === t.building && !(t.constructing && t.constructing.repair)) { drawBurnt(g, t); return; }
+    if (drawRoofed(g, t, id, look)) return;
     const r = root(id), tier = (D.BUILDINGS[id] || {}).tier || 0;
     const { x, y } = t;
     if (r === "house") {
@@ -845,7 +1047,7 @@ const VillageView = (function () {
       q.life += dt; q.x += q.vx * dt; q.y += q.vy * dt;
       if (q.life > q.max) { particles.splice(i, 1); continue; }
       const k = q.life / q.max;
-      if (q.kind === "smoke") { c.fillStyle = "rgba(200,200,205," + (0.22 * (1 - k)) + ")"; c.beginPath(); c.arc(q.x, q.y, 0.05 + k * 0.16, 0, 7); c.fill(); }
+      if (q.kind === "smoke") { c.fillStyle = (q.dark ? "rgba(50,45,42," + (0.45 * (1 - k)) : "rgba(200,200,205," + (0.22 * (1 - k))) + ")"; c.beginPath(); c.arc(q.x, q.y, 0.05 + k * (q.dark ? 0.3 : 0.16), 0, 7); c.fill(); }
       else if (q.kind === "spark") { c.fillStyle = "rgba(255,200,90," + (1 - k) + ")"; c.fillRect(q.x, q.y, 0.025, 0.025); q.vy += dt * 2; }
       else if (q.kind === "chip") { c.fillStyle = "rgba(190,150,100," + (1 - k) + ")"; c.fillRect(q.x, q.y, 0.03, 0.02); q.vy += dt * 2; }
     }
@@ -921,6 +1123,141 @@ const VillageView = (function () {
     }
   }
 
+
+  // ---------------------------------------------------------------
+  // BATTLES
+  // ---------------------------------------------------------------
+  function noteDeaths() {
+    const b = game && game.battle;
+    if (!b) return;
+    const seen = seenDeaths[b.id] || 0;
+    for (let i = seen; i < b.deaths.length; i++) {
+      const d = b.deaths[i];
+      const p = pawns.get(d.id);
+      corpses.push({ x: d.x, y: d.y, skin: p ? p.skin : SKIN[0], hair: p ? p.hair : HAIR[0], shirt: p ? p.shirt : SHIRT_BY_TYPE.labourer[0], t: simNow });
+      if (p) pawns.delete(d.id);
+    }
+    seenDeaths[b.id] = b.deaths.length;
+    if (corpses.length > 30) corpses.splice(0, corpses.length - 30);
+  }
+  function lying(c, x, y, shirt, skin, hair, alpha, scale) {
+    c.save(); c.globalAlpha = alpha; c.translate(x, y); c.scale(scale || PAWN_SCALE, scale || PAWN_SCALE); c.rotate(Math.PI / 2.3);
+    c.fillStyle = "rgba(90,10,10,0.5)"; c.beginPath(); c.ellipse(0.02, 0.04, 0.11, 0.06, 0, 0, 7); c.fill();
+    c.fillStyle = shirt; c.beginPath(); c.ellipse(0, 0.02, 0.085, 0.06, 0, 0, 7); c.fill(); c.strokeStyle = INK; c.lineWidth = 0.016; c.stroke();
+    c.fillStyle = skin; c.beginPath(); c.arc(0, -0.07, 0.05, 0, 7); c.fill(); c.stroke();
+    if (hair) { c.fillStyle = hair; c.beginPath(); c.arc(0, -0.085, 0.045, Math.PI, 0); c.fill(); }
+    c.restore();
+  }
+  function drawCorpses(c) {
+    for (let i = corpses.length - 1; i >= 0; i--) {
+      const k = corpses[i], age = simNow - k.t;
+      if (age > 90) { corpses.splice(i, 1); continue; }
+      lying(c, k.x, k.y, k.shirt, k.skin, k.hair, age > 70 ? (90 - age) / 20 : 1);
+    }
+  }
+  function healthBar(c, x, y, hp, max) {
+    if (hp >= max || hp <= 0) return;
+    c.fillStyle = "rgba(0,0,0,0.6)"; c.fillRect(x - 0.1, y, 0.2, 0.03);
+    c.fillStyle = hp / max > 0.5 ? "#8fbf5a" : hp / max > 0.25 ? "#e0b050" : "#d84a2a"; c.fillRect(x - 0.1, y, 0.2 * hp / max, 0.03);
+  }
+  function addBattleDrawables(c, items, now) {
+    const b = game.battle;
+    for (const d of b.defenders) {
+      const p = pawns.get(d.id) || { skin: SKIN[1], hair: HAIR[1], shirt: SHIRT_BY_TYPE.soldier[0], anim: 0, sex: "m" };
+      if (d.state === "down") { items.push({ y: d.y - 0.2, draw: () => lying(c, d.x, d.y, p.shirt, p.skin, p.hair, 0.95) }); continue; }
+      items.push({ y: d.y, draw: () => {
+        const fake = { x: d.x, y: d.y, child: false, moving: d.state !== "fight", anim: p.anim || 0, skin: p.skin, hair: p.hair, shirt: d.ally ? "#3a4a6a" : SHIRT_BY_TYPE.soldier[0], sex: p.sex,
+          type: "soldier", facing: d.fx || 1, act: "work", job: d.job, dest: { pose: d.job === "archer" ? "stand" : "hammer" }, carry: null };
+        drawPawn(c, fake, now);
+        if (d.hitT < 0.15) { c.fillStyle = "rgba(255,40,30,0.35)"; c.beginPath(); c.arc(d.x, d.y - 0.05, 0.14, 0, 7); c.fill(); }
+        healthBar(c, d.x, d.y - 0.32, d.hp, d.maxHp);
+      } });
+    }
+    for (const a of b.attackers) {
+      if (a.state === "gone") continue;
+      if (a.state === "dead") { items.push({ y: a.y - 0.2, draw: () => drawFoe(c, a, now, true) }); continue; }
+      items.push({ y: a.y, draw: () => drawFoe(c, a, now, false) });
+    }
+  }
+  // Raiders, warriors and monsters.
+  function drawFoe(c, a, now, dead) {
+    const k = a.kind, f = a.fx || -1;
+    c.save();
+    c.translate(a.x, a.y);
+    if (dead) { c.rotate(Math.PI / 2.2); c.globalAlpha = 0.85; }
+    c.scale(PAWN_SCALE, PAWN_SCALE);
+    const bob = !dead && a.state !== "fight" ? Math.abs(Math.sin((now + a.x) * 10)) * 0.02 : 0;
+    c.translate(0, -bob);
+    c.fillStyle = "rgba(0,0,0,0.3)"; c.beginPath(); c.ellipse(0, 0.07 + bob, 0.1, 0.045, 0, 0, 7); c.fill();
+    c.strokeStyle = INK; c.lineWidth = 0.018;
+    const swing = a.state === "fight" ? Math.sin(now * 9 + a.x * 3) : 0;
+    if (k === "raider" || k === "warrior") {
+      const cloak = k === "raider" ? "#4a2a22" : "#3a3e48";
+      c.fillStyle = cloak; c.beginPath(); c.ellipse(0, 0.02, 0.09, 0.075, 0, 0, 7); c.fill(); c.stroke();
+      c.fillStyle = k === "raider" ? "#8a2420" : "#a08a3a"; c.fillRect(-0.085, 0.0, 0.17, 0.022);
+      c.fillStyle = "#d8b090"; c.beginPath(); c.arc(f * 0.01, -0.075, 0.056, 0, 7); c.fill(); c.stroke();
+      if (k === "raider") { c.fillStyle = "#2a1c18"; c.beginPath(); c.arc(f * 0.005, -0.08, 0.062, Math.PI * 0.95, Math.PI * 2.05); c.fill(); }
+      else { c.fillStyle = "#7a7a7a"; c.beginPath(); c.arc(0, -0.088, 0.06, Math.PI, 0); c.fill(); c.stroke(); c.fillStyle = "#8a2420"; c.fillRect(-0.01, -0.16, 0.02, 0.05); }
+      // blade
+      const ang = -0.7 + swing * 0.9;
+      c.strokeStyle = "#c8c8c8"; c.lineWidth = 0.02; c.beginPath(); c.moveTo(f * 0.08, 0); c.lineTo(f * (0.08 + Math.cos(ang) * 0.15), Math.sin(ang) * 0.15); c.stroke();
+      if (k === "warrior") { c.fillStyle = "#6a3a2a"; c.beginPath(); c.arc(-f * 0.08, 0.02, 0.05, 0, 7); c.fill(); c.strokeStyle = INK; c.lineWidth = 0.014; c.stroke(); }
+      if (a.carry > 0 && !dead) { c.fillStyle = "#b09a6a"; c.beginPath(); c.arc(-f * 0.06, -0.12, 0.05, 0, 7); c.fill(); c.strokeStyle = INK; c.lineWidth = 0.012; c.stroke(); }
+    } else if (k === "drowner") {
+      c.fillStyle = "#3e6a5e"; c.beginPath(); c.ellipse(0, 0.02, 0.1, 0.08, 0, 0, 7); c.fill(); c.stroke();
+      c.fillStyle = "#4e7e70"; c.beginPath(); c.arc(f * 0.02, -0.07, 0.065, 0, 7); c.fill(); c.stroke();
+      c.fillStyle = "#e8e050"; c.fillRect(f * 0.02 - 0.03, -0.085, 0.02, 0.015); c.fillRect(f * 0.02 + 0.01, -0.085, 0.02, 0.015);
+      c.strokeStyle = "#2a4a40"; c.lineWidth = 0.02; c.beginPath(); c.moveTo(f * 0.08, 0.0); c.lineTo(f * (0.14 + swing * 0.04), 0.06); c.stroke();
+    } else if (k === "nekker") {
+      c.scale(0.8, 0.8);
+      c.fillStyle = "#6a5a48"; c.beginPath(); c.ellipse(0, 0.02, 0.09, 0.07, 0, 0, 7); c.fill(); c.stroke();
+      c.fillStyle = "#7a6a56"; c.beginPath(); c.arc(f * 0.02, -0.07, 0.06, 0, 7); c.fill(); c.stroke();
+      c.beginPath(); c.moveTo(-0.04, -0.1); c.lineTo(-0.1, -0.17); c.lineTo(-0.01, -0.12); c.moveTo(0.04, -0.1); c.lineTo(0.1, -0.17); c.lineTo(0.01, -0.12); c.fill(); c.stroke();
+      c.fillStyle = "#e04030"; c.fillRect(f * 0.02 - 0.025, -0.08, 0.015, 0.015); c.fillRect(f * 0.02 + 0.01, -0.08, 0.015, 0.015);
+    } else {
+      // ghoul
+      c.fillStyle = "#9a9a8a"; c.beginPath(); c.ellipse(0, 0.02, 0.11, 0.08, 0, 0, 7); c.fill(); c.stroke();
+      c.fillStyle = "#b0ae9c"; c.beginPath(); c.arc(f * 0.03, -0.06, 0.06, 0, 7); c.fill(); c.stroke();
+      c.fillStyle = "#c03020"; c.fillRect(f * 0.03 - 0.025, -0.07, 0.015, 0.012); c.fillRect(f * 0.03 + 0.01, -0.07, 0.015, 0.012);
+      c.strokeStyle = "#e0dccc"; c.lineWidth = 0.012; c.beginPath();
+      for (let i = 0; i < 3; i++) { c.moveTo(f * 0.09, -0.01 + i * 0.02); c.lineTo(f * (0.15 + swing * 0.03), -0.03 + i * 0.03); }
+      c.stroke();
+    }
+    c.restore();
+    if (!dead) {
+      if (a.hitT < 0.15) { c.fillStyle = "rgba(255,255,255,0.35)"; c.beginPath(); c.arc(a.x, a.y - 0.05, 0.14, 0, 7); c.fill(); }
+      healthBar(c, a.x, a.y - 0.3, a.hp, a.maxHp);
+    }
+  }
+  function drawShots(c) {
+    const b = game.battle;
+    if (!b || !battleOn()) return;
+    c.strokeStyle = "rgba(240,230,200,0.9)"; c.lineWidth = 0.015;
+    for (const s of b.shots) {
+      const age = b.t - s.t;
+      if (age < 0 || age > 0.35) continue;
+      const k = age / 0.35, x = s.fx + (s.tx - s.fx) * k, y = s.fy + (s.ty - s.fy) * k - Math.sin(k * Math.PI) * 0.3;
+      const dx = (s.tx - s.fx), dy = (s.ty - s.fy), d = Math.hypot(dx, dy) || 1;
+      c.beginPath(); c.moveTo(x - dx / d * 0.14, y - dy / d * 0.14); c.lineTo(x, y); c.stroke();
+    }
+  }
+  function drawFires(c, now, dt) {
+    const b = game.battle;
+    if (!b || !b.fires) return;
+    for (const key in b.fires) {
+      const [x, y] = key.split(",").map(Number);
+      const prog = b.fires[key];
+      const n = 3 + Math.floor(prog * 6);
+      for (let i = 0; i < n; i++) {
+        const fx = x + 0.2 + hash(x, y, 700 + i) * 0.6, fy = y + 0.25 + hash(x, y, 710 + i) * 0.5;
+        const h = 0.12 + Math.sin(now * 12 + i * 1.7) * 0.04 + prog * 0.1;
+        c.fillStyle = "rgba(230,100,30,0.85)"; c.beginPath(); c.moveTo(fx - 0.06, fy); c.quadraticCurveTo(fx, fy - h * 1.4, fx + 0.06, fy); c.fill();
+        c.fillStyle = "rgba(255,210,90,0.9)"; c.beginPath(); c.moveTo(fx - 0.03, fy); c.quadraticCurveTo(fx, fy - h * 0.8, fx + 0.03, fy); c.fill();
+      }
+      if (dt > 0 && rnd() < dt * 4 && particles.length < 120) particles.push({ kind: "smoke", x: x + 0.3 + rnd() * 0.4, y: y + 0.2, vx: 0.15 + rnd() * 0.1, vy: -0.35, life: 0, max: 3 + rnd() * 2, dark: true });
+    }
+  }
+
   function darkness(phase) {
     if (phase < 0.18 || phase >= 0.94) return { k: 1, tint: 0 };
     if (phase < 0.27) { const f = (phase - 0.18) / 0.09; return { k: 1 - f, tint: Math.sin(f * Math.PI) }; }
@@ -945,6 +1282,11 @@ const VillageView = (function () {
     const flick = 1 + Math.sin(now * 9) * 0.05;
     for (const l of world.lights) glow(l.x, l.y, l.r * (l.fire ? flick : 1));
     for (const p of pawns.values()) if (p.act === "watch" && p.visible) glow(p.x, p.y - 0.1, 0.9 * flick);
+    if (game.battle && battleOn()) {
+      for (const key in game.battle.fires) { const [fx, fy] = key.split(",").map(Number); glow(fx + 0.5, fy + 0.5, 2.2 * flick); }
+      for (const a of game.battle.attackers) if ((a.kind === "raider" || a.kind === "warrior") && a.state !== "dead" && a.state !== "gone") glow(a.x, a.y - 0.1, 0.9 * flick);
+      for (const d of game.battle.defenders) if (d.state !== "down") glow(d.x, d.y - 0.1, 0.7 * flick);
+    }
     c.save();
     c.setTransform(1, 0, 0, 1, 0, 0);
     c.drawImage(dc, 0, 0, canvas.width, canvas.height);
@@ -1010,11 +1352,19 @@ const VillageView = (function () {
 
   function tick(dt, now) {
     const before = clock;
-    clock = (clock + dt / DAY_SECONDS) % 1;
-    if (clock < before) { dayCount++; rollWeather(); }
-    for (const p of pawns.values()) updatePawn(p, dt, now);
-    emitSmoke(now, dt);
-    draw(dt, now);
+    let simDt = dt;
+    if (clockFn) {
+      const gc = clockFn();
+      clock = gc.phase % 1; simDt = dt * gc.speed;
+    } else {
+      clock = (clock + dt / DAY_SECONDS) % 1;
+    }
+    if (clock < before - 0.5) { dayCount++; rollWeather(); }
+    simNow += simDt;
+    noteDeaths();
+    for (const p of pawns.values()) updatePawn(p, simDt, simNow);
+    if (simDt > 0) emitSmoke(simNow, simDt);
+    draw(simDt, now);
     const label = clockLabel(clock);
     if (label !== lastLabel) { lastLabel = label; if (onClockLabel) onClockLabel(label); }
   }
@@ -1026,8 +1376,13 @@ const VillageView = (function () {
     c.setTransform(tile * dpr, 0, 0, tile * dpr, 0, 0);
     drawWater(c, now);
     drawFire(c, now);
-    const list = Array.from(pawns.values()).filter(p => p.visible).sort((a, b) => a.y - b.y);
-    for (const p of list) drawPawn(c, p, now);
+    drawCorpses(c);
+    const items = Array.from(pawns.values()).filter(p => p.visible).map(p => ({ y: p.y, draw: () => drawPawn(c, p, now) }));
+    if (battleOn()) addBattleDrawables(c, items, now);
+    items.sort((a, b) => a.y - b.y);
+    for (const it of items) it.draw();
+    drawFires(c, now, dt);
+    drawShots(c);
     drawParticles(c, dt);
     drawWeather(c, dt, now);
     drawLighting(c, now);
@@ -1059,7 +1414,7 @@ const VillageView = (function () {
 
   function mapKey() {
     let k = world.season + "|" + tile + "|" + dpr + "|" + world.tents.length + "|";
-    for (const t of game.grid) if (t.building || t.constructing) k += t.x + "," + t.y + ":" + (t.building || "") + "/" + (t.constructing ? t.constructing.buildingId + Math.ceil(t.constructing.remaining) : "") + ";";
+    for (const t of game.grid) if (t.building || t.constructing) k += t.x + "," + t.y + ":" + (t.building || "") + (t.burnt ? "!" : "") + "/" + (t.constructing ? t.constructing.buildingId + Math.ceil(t.constructing.remaining) : "") + ";";
     return k;
   }
 
@@ -1120,11 +1475,17 @@ const VillageView = (function () {
   }
 
   // For screenshots and tests: jump to a time of day (0 midnight, 0.5 midday).
-  function setClock(v) { clock = ((v % 1) + 1) % 1; for (const p of pawns.values()) { p.act = null; } }
+  function setClock(v) {
+    clock = ((v % 1) + 1) % 1;
+    if (clockSet) clockSet(clock);      // the game's clock is the one that counts
+    for (const p of pawns.values()) { p.act = null; }
+  }
 
   function centre() { return world ? world.commons : null; }
+  let clockSet = null;
+  function useClock(fn, setFn) { clockFn = fn; clockSet = setFn || null; }
 
-  return { supported, mount, setTileSize, start, personAt, setClock, centre };
+  return { supported, mount, setTileSize, start, personAt, setClock, centre, useClock };
 })();
 
 if (typeof window !== "undefined") window.VillageView = VillageView;

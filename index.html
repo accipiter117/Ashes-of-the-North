@@ -6,7 +6,7 @@
 <title>Ashes of the North</title>
 <meta name="description" content="A mobile-first settlement strategy game inspired by the Northern Kingdoms.">
 <meta name="theme-color" content="#12151a">
-<link rel="stylesheet" href="css/style.css?v=2026-11-07b">
+<link rel="stylesheet" href="css/style.css?v=2026-11-07c">
 </head>
 <body>
 
@@ -34,7 +34,13 @@
     </main>
   </div>
 
-  <button id="turnBtn" title="Advance to the next month">Advance<br><span id="turnBtnSeason">Turn</span></button>
+  <div id="battleBanner" hidden></div>
+  <div id="timeControls" aria-label="Time controls">
+    <button id="pauseBtn" title="Pause or resume (space)">⏸</button>
+    <button id="speedBtn" title="Game speed">1×</button>
+    <button id="turnBtn" title="Skip to the next month">⏭<span id="turnBtnSeason" hidden></span></button>
+    <div id="monthBar"><span id="monthFill"></span></div>
+  </div>
 
   <nav id="bottomNav">
     <button class="nav-btn active" data-view="settlement"><span class="nav-icon">🏘</span><span class="nav-label">Settlement</span></button>
@@ -51,10 +57,10 @@
 <div id="modalRoot"></div>
 <div class="toast-stack" id="toastStack"></div>
 
-<script src="js/data.js?v=2026-11-07b"></script>
-<script src="js/engine.js?v=2026-11-07b"></script>
-<script src="js/village-view.js?v=2026-11-07b"></script>
-<script src="js/ui.js?v=2026-11-07b"></script>
-<script src="js/main.js?v=2026-11-07b"></script>
+<script src="js/data.js?v=2026-11-07c"></script>
+<script src="js/engine.js?v=2026-11-07c"></script>
+<script src="js/village-view.js?v=2026-11-07c"></script>
+<script src="js/ui.js?v=2026-11-07c"></script>
+<script src="js/main.js?v=2026-11-07c"></script>
 </body>
 </html>

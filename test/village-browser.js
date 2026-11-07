@@ -73,6 +73,32 @@ server.listen(0, async () => {
     const c = await snap(); await page.waitForTimeout(800); const d = await snap();
     check(c !== d, "the village animates again after returning to the map");
 
+    // real time: the month bar fills, pause stops it, speed cycles, skip moves to the next month
+    const fillAt = () => page.evaluate(() => parseFloat(document.getElementById("monthFill").style.width));
+    const f1 = await fillAt(); await page.waitForTimeout(1500); const f2 = await fillAt();
+    check(f2 > f1, "the month runs on in real time (" + f1 + "% -> " + f2 + "%)");
+    await page.click("#pauseBtn"); const p1 = await fillAt(); await page.waitForTimeout(1200); const p2 = await fillAt();
+    check(p1 === p2 && (await page.textContent("#pauseBtn")) === "▶", "pause stops the clock");
+    await page.click("#pauseBtn");
+    await page.click("#speedBtn");
+    check((await page.textContent("#speedBtn")) === "2×", "the speed button cycles to 2×");
+    await page.click("#speedBtn"); await page.click("#speedBtn");
+    const monthBefore = await page.evaluate(() => UI.getState().meta.turn);
+    await page.click("#turnBtn");
+    await page.waitForTimeout(200);
+    const monthAfter = await page.evaluate(() => { const s = UI.getState(); if (s.activeEvent) { document.querySelector(".option-btn:not([disabled])").click(); } return s.meta.turn; });
+    check(monthAfter === monthBefore + 1, "skip moves to the next month");
+
+    // an attack shows on the map with a banner, and ends
+    await page.evaluate(() => { const s = UI.getState(); s.activeEvent = null; document.getElementById("modalRoot").innerHTML = ""; GameEngine.tileAt(s.grid, 9, 8).building = "granary"; s.resources.food = 80; GameEngine.startBattle(s, { kind: "raider", from: "east", count: 3, mode: "sally", label: "Test raiders" }); });
+    await page.waitForTimeout(1500);
+    check(/Test raiders/.test(await page.textContent("#battleBanner")) && await page.isVisible("#battleBanner"), "the battle banner shows the attack");
+    const ba = await snap(); await page.waitForTimeout(700); const bb = await snap();
+    check(ba !== bb, "the battle animates on the map");
+    await page.evaluate(() => GameEngine.finishBattleNow(UI.getState()));
+    await page.waitForTimeout(400);
+    check(await page.isHidden("#battleBanner"), "the banner goes once the battle is over");
+
     check(errors.length === 0, "no page errors" + (errors.length ? ": " + errors.join(" | ") : ""));
   } catch (e) {
     console.error(e); failed = true;
