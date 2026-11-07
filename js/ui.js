@@ -103,7 +103,7 @@ const UI = (function () {
 
   function renderResourceBar() {
     const bar = document.getElementById("resourceBar");
-    const order = ["food","wood","stone","iron","coin","herbs","tools","weapons","knowledge","influence","stability","reputation"];
+    const order = ["food","wood","stone","iron","coin","herbs","tools","weapons","ale","furniture","knowledge","influence","stability","reputation"];
     bar.innerHTML = order.map(r => {
       const info = D.RESOURCE_INFO[r];
       const val = state.resources[r] || 0;
@@ -204,6 +204,7 @@ const UI = (function () {
       toolbar +
       grid +
       '<div id="tilePanel"></div>' +
+      renderNeedsCard() +
       renderMilitarySummaryCard();
 
     // The living village: painted map and residents going about their day.
@@ -281,6 +282,56 @@ const UI = (function () {
     return Math.sqrt(dx * dx + dy * dy);
   }
 
+  // ---------------------------------------------------------------
+  // NEEDS & MOOD
+  // ---------------------------------------------------------------
+  function moodWord(h) {
+    if (h >= 0.75) return { word: "Content", cls: "good", face: "😊" };
+    if (h >= 0.55) return { word: "Settled", cls: "", face: "🙂" };
+    if (h >= 0.4) return { word: "Restless", cls: "warn", face: "😐" };
+    return { word: "Miserable", cls: "bad", face: "😠" };
+  }
+  function meter(level, cls) {
+    const pct = Math.round(Math.max(0, Math.min(1, level)) * 100);
+    const tone = cls || (pct >= 75 ? "good" : pct >= 40 ? "warn" : "bad");
+    return '<span class="meter ' + tone + '"><span style="width:' + pct + '%"></span></span>';
+  }
+  function renderNeedsCard() {
+    const rep = E.needsReport(state);
+    const mood = moodWord(rep.happiness);
+    const active = rep.needs.filter(n => n.active), soon = rep.needs.filter(n => n.soon);
+    const pace = rep.pace;
+    let html = '<div class="card"><h3>Needs &amp; Mood</h3>' +
+      '<div class="row"><span>' + mood.face + ' The people are <strong>' + mood.word.toLowerCase() + '</strong></span><span>' + Math.round(rep.happiness * 100) + '%</span></div>' +
+      '<div class="sub" style="margin-top:-2px">Work pace ×' + pace.toFixed(2) + '. Happy towns work harder, have more children and draw newcomers; miserable ones lose families to the road.</div>';
+    for (const n of active) {
+      html += '<div class="row need-row" title="' + n.desc + '"><span>' + n.icon + ' ' + n.name + '</span><span class="need-val">' + meter(n.level) + ' ' + Math.round(n.level * 100) + '%</span></div>' +
+        (n.level < 0.6 ? '<div class="sub need-hint">' + n.desc + '</div>' : '');
+    }
+    if (soon.length) {
+      html += '<div class="sub" style="margin-top:6px">Once a ' + soon[0].from.toLowerCase() + ', households will also expect: ' + soon.map(n => n.icon + ' ' + n.name.toLowerCase()).join(", ") + '.</div>';
+    }
+    return html + '</div>';
+  }
+
+  function renderVoicesCard() {
+    const groups = E.groupReport(state);
+    let html = '<div class="card"><h3>Voices of the Town</h3><p class="sub">Each group judges you by how its people live, what it particularly wants, and your edicts. Those who approve work harder; under 25, they petition.</p>';
+    for (const g of groups) {
+      const trend = g.trend > 0 ? ' <span class="trend up">▲</span>' : g.trend < 0 ? ' <span class="trend down">▼</span>' : '';
+      const lines = [];
+      if (g.grievance) lines.push('Wants ' + g.grievance + '.');
+      else if (g.pleasedBy) lines.push('Pleased with ' + g.pleasedBy + '.');
+      if (g.edictsHated.length) lines.push('Resents ' + g.edictsHated.join(", ") + '.');
+      if (g.edictsLiked.length) lines.push('Welcomes ' + g.edictsLiked.join(", ") + '.');
+      html += '<div class="group-row">' +
+        '<div class="row" style="margin:0"><span>' + g.icon + ' <strong>' + g.name + '</strong>' + (g.members ? ' <span class="sub">(' + g.members + ')</span>' : '') + '</span>' +
+        '<span class="need-val">' + meter(g.approval / 100) + ' ' + Math.round(g.approval) + trend + '</span></div>' +
+        '<div class="sub">' + g.wants + '. ' + lines.join(" ") + (g.members ? ' Working at ×' + g.workMult.toFixed(2) + '.' : '') + '</div></div>';
+    }
+    return html + '</div>';
+  }
+
   function renderMilitarySummaryCard() {
     const cap = E.capacities(state);
     const str = E.militaryStrength(state).toFixed(1);
@@ -294,6 +345,8 @@ const UI = (function () {
         (overcrowded ? ' <span class="tag bad">overcrowded</span>' : '') + '</span></div>' +
       (overcrowded ? '<div class="sub" style="color:var(--blood-bright);margin-top:-2px">Growth slows until more housing is built.</div>' : '') +
       '<div class="row"><span>Military Strength</span><span>' + str + '</span></div>' +
+      '<div class="row"><span>Soldiers armed</span><span>' + Math.round(E.armedFraction(state) * 100) + '%' + (E.armedFraction(state) < 1 ? ' <span class="tag bad">unarmed fight at half strength</span>' : '') + '</span></div>' +
+      '<div class="row"><span>Tools to hand</span><span>' + Math.round(E.toolCoverage(state) * 100) + '%' + (E.toolCoverage(state) < 0.75 ? ' <span class="tag bad">work slowed</span>' : '') + '</span></div>' +
       '<div class="row"><span>Defense</span><span>' + cap.defense.toFixed(0) + '</span></div>' +
       '<div class="row"><span>Upkeep</span><span>' + upkeep.toFixed(1) + ' coin/mo' +
         (upkeepShortfall ? ' <span class="tag bad">short</span>' : '') + '</span></div>' +
@@ -502,7 +555,7 @@ const UI = (function () {
     }
     return '<div class="citizen-row">' +
       '<div><div class="citizen-name">' + (c.important ? '<span class="important-star">★</span>' : '') + c.name + '</div>' +
-      '<div class="citizen-meta">Age ' + c.age + (traitNames ? " · " + traitNames : "") + (c.age < 12 ? " · child" : "") + '</div>' +
+      '<div class="citizen-meta">' + moodWord((c.happiness === undefined ? 60 : c.happiness) / 100).face + ' Age ' + c.age + (traitNames ? " · " + traitNames : "") + (c.age < 12 ? " · child" : "") + '</div>' +
       familyLine +
       '</div>' +
       (c.age < 12
@@ -674,6 +727,7 @@ const UI = (function () {
   // ---------------------------------------------------------------
   // RESEARCH / DEVELOPMENT
   // ---------------------------------------------------------------
+  function groupName(id) { const g = D.INTEREST_GROUPS.find(x => x.id === id); return g ? g.name : id; }
   function renderResearch() {
     const el = document.getElementById("view-research");
     const branches = {};
@@ -685,6 +739,7 @@ const UI = (function () {
     let html = '<h2 class="section-title">Governance</h2>' +
       '<p class="hint">Standing edicts shape the settlement for as long as they hold. Development below is a one-time technology tree.</p>';
 
+    html += renderVoicesCard();
     html += '<div class="card"><h3>Edicts</h3>';
     for (const id in D.EDICTS) {
       const edict = D.EDICTS[id];
@@ -696,6 +751,8 @@ const UI = (function () {
       html += '<div class="row" style="align-items:flex-start">' +
         '<div><strong>' + edict.name + '</strong>' + (active ? ' <span class="tag good">Active</span>' : '') +
         '<div class="sub">' + edict.desc + '</div>' +
+        (edict.likes && edict.likes.length ? '<div class="sub">Pleases: ' + edict.likes.map(groupName).join(", ") + '</div>' : '') +
+        (edict.dislikes && edict.dislikes.length ? '<div class="sub" style="color:var(--blood-bright)">Angers: ' + edict.dislikes.map(groupName).join(", ") + '</div>' : '') +
         (onCooldown ? '<div class="sub">Can change again in ' + (edict.cooldown - turnsSince) + ' month(s)</div>' : '') + '</div>' +
         '<button class="btn small' + (active ? ' danger' : '') + '" data-edict="' + id + '"' + (onCooldown ? ' disabled' : '') + '>' +
         (active ? 'Repeal' : 'Declare') + '</button>' +

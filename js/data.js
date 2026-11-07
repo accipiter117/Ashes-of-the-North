@@ -30,6 +30,8 @@ const GameData = (function () {
     herbs:     { name: "Herbs",     icon: "🌿", core: false },
     tools:     { name: "Tools",     icon: "🔨", core: false },
     weapons:   { name: "Weapons",   icon: "⚔", core: false },
+    ale:       { name: "Ale",       icon: "🍺", core: false },
+    furniture: { name: "Furniture", icon: "🪑", core: false },
     knowledge: { name: "Knowledge", icon: "📜", abstract: true },
     influence: { name: "Influence", icon: "🕯", abstract: true },
     stability: { name: "Stability", icon: "⚖", abstract: true, max: 100 },
@@ -38,7 +40,7 @@ const GameData = (function () {
 
   const STARTING_RESOURCES = {
     food: 40, wood: 60, stone: 30, iron: 5, coin: 25,
-    herbs: 4, tools: 6, weapons: 4,
+    herbs: 4, tools: 6, weapons: 4, ale: 0, furniture: 0,
     knowledge: 0, influence: 5, stability: 55, reputation: 40
   };
 
@@ -61,9 +63,9 @@ const GameData = (function () {
     miner:          { name: "Miner",           type: "labourer", requiresBuilding: "mine",        produces: { stone: 1.4, iron: 0.8 } },
     builder:        { name: "Builder",         type: "labourer", requiresBuilding: null,          produces: {}, buildBonus: true },
     blacksmith:     { name: "Blacksmith",      type: "artisan",  requiresBuilding: "workshop",    produces: { tools: 1.1, weapons: 0.5 }, consumes: { iron: 0.8 } },
-    carpenter:      { name: "Carpenter",       type: "artisan",  requiresBuilding: "workshop",    produces: { tools: 0.6 }, consumes: { wood: 0.6 }, buildBonus: true },
+    carpenter:      { name: "Carpenter",       type: "artisan",  requiresBuilding: "workshop",    produces: { tools: 0.3, furniture: 0.5 }, consumes: { wood: 0.7 }, buildBonus: true },
     tanner:         { name: "Tanner",          type: "artisan",  requiresBuilding: "workshop",    produces: { coin: 1.0 } },
-    brewer:         { name: "Brewer",          type: "artisan",  requiresBuilding: "workshop",    produces: { stability: 0.15, coin: 0.6 }, consumes: { food: 0.4 } },
+    brewer:         { name: "Brewer",          type: "artisan",  requiresBuilding: "workshop",    produces: { ale: 1.4, coin: 0.3 }, consumes: { food: 0.4 } },
     mason:          { name: "Mason",           type: "artisan",  requiresBuilding: null,          produces: { stone: 0.5 }, buildBonus: true },
     trader:         { name: "Trader",          type: "merchant", requiresBuilding: "market",      produces: { coin: 1.8 } },
     innkeeper:      { name: "Innkeeper",       type: "merchant", requiresBuilding: "market",       produces: { coin: 0.9, stability: 0.1 } },
@@ -129,7 +131,13 @@ const GameData = (function () {
     storehouse:  { name: "Ruined Storehouse", chain: ["storehouse","granary"],          tier: 0, cost: {},                     upkeep: {}, effect: {}, buildTime: 0, ruin: true },
     granary:     { name: "Granary",           chain: ["storehouse","granary"],          tier: 1, cost: { wood: 20, stone: 8 }, upkeep: { coin: 0.3 }, effect: { foodStorage: 200, spoilReduction: 0.5 }, buildTime: 3, upgradeOf: "storehouse" },
 
-    well:        { name: "Well",              chain: ["well"],                          tier: 0, cost: { stone: 6 },           upkeep: {}, effect: { stability: 0.1 }, buildTime: 1 }
+    well:        { name: "Well",              chain: ["well"],                          tier: 0, cost: { stone: 6 },           upkeep: {}, effect: { stability: 0.1 }, buildTime: 1 },
+
+    // Built for the needs of a growing town: room to pray beyond the old chapel,
+    // and dedicated houses for the brewers and carpenters a town's homes call for.
+    wayshrine:   { name: "Wayside Shrine",    chain: ["wayshrine","chapel","sanctum"],  tier: 0, cost: { wood: 8, stone: 8 },  upkeep: { coin: 0.1 }, effect: { faithRoom: 15 }, buildTime: 1 },
+    brewhouse:   { name: "Brewhouse",         chain: ["brewhouse"],                     tier: 0, cost: { wood: 18, stone: 8, tools: 2 }, upkeep: { coin: 0.4 }, effect: { jobSlots: { brewer: 3 } }, buildTime: 2 },
+    joinery:     { name: "Joiner's Shop",     chain: ["joinery"],                       tier: 0, cost: { wood: 22, tools: 4 },  upkeep: { coin: 0.4 }, effect: { jobSlots: { carpenter: 3 } }, buildTime: 2 }
   };
 
   // ---------------------------------------------------------------
@@ -233,15 +241,86 @@ const GameData = (function () {
   // ---------------------------------------------------------------
   // INTEREST GROUPS
   // ---------------------------------------------------------------
+  // ---------------------------------------------------------------
+  // INTEREST GROUPS: the voices of the town. Each has an approval (0-100) that
+  // drifts toward what it thinks of the settlement: how well its members live,
+  // its own particular wants (see engine.js `groupWants`) and the edicts in
+  // force (EDICTS likes/dislikes). Approval above 50 makes its members work
+  // harder, below 50 slower; a group that falls below 25 petitions the elder.
+  // ---------------------------------------------------------------
   const INTEREST_GROUPS = [
-    { id: "farmers",   name: "Farmers",   wants: "Land and low taxes", linkedJobs: ["farmer","fisherman"] },
-    { id: "labourers", name: "Labourers", wants: "Steady work and fair pay", linkedJobs: ["lumberjack","miner","builder"] },
-    { id: "merchants", name: "Merchants", wants: "Safe roads and open trade", linkedJobs: ["trader","innkeeper","caravan_master"] },
-    { id: "artisans",  name: "Artisans",  wants: "Workshops and guild privileges", linkedJobs: ["blacksmith","carpenter","tanner","brewer","mason"] },
-    { id: "soldiers",  name: "Soldiers",  wants: "Funding and equipment", linkedJobs: ["militia","guard","archer","scout"] },
-    { id: "clergy",    name: "Clergy",    wants: "Religious institutions", linkedJobs: [] },
-    { id: "scholars",  name: "Scholars",  wants: "Schools and knowledge", linkedJobs: ["teacher","physician","alchemist","herbalist"] }
+    { id: "farmers",   name: "Farmers",   icon: "🌾", wants: "Full granaries, good fields and low taxes", linkedJobs: ["farmer","fisherman"] },
+    { id: "labourers", name: "Labourers", icon: "🪓", wants: "Steady work, a roof, and no forced labour", linkedJobs: ["lumberjack","miner","builder"] },
+    { id: "merchants", name: "Merchants", icon: "⚖", wants: "A market, safe roads and friendly trading partners", linkedJobs: ["trader","innkeeper","caravan_master"] },
+    { id: "artisans",  name: "Artisans",  icon: "⚒", wants: "Workshops, iron to work and tools to work it with", linkedJobs: ["blacksmith","carpenter","tanner","brewer","mason"] },
+    { id: "soldiers",  name: "Soldiers",  icon: "🛡", wants: "Weapons in every hand, wages paid and proper barracks", linkedJobs: ["militia","guard","archer","scout"] },
+    { id: "clergy",    name: "Clergy",    icon: "🕯", wants: "Chapels with room for all, and a faithful town", linkedJobs: [] },
+    { id: "scholars",  name: "Scholars",  icon: "📜", wants: "Schools, healers and the freedom to teach", linkedJobs: ["teacher","physician","alchemist","herbalist","administrator","scribe","tax_collector"] }
   ];
+
+  // ---------------------------------------------------------------
+  // NEEDS: what households expect, growing with the settlement. A refugee
+  // camp only asks to be fed and sheltered; a city expects ale, a market and
+  // furnished homes. Each need is met from 0 to 100%; together they make the
+  // settlement's happiness (see engine.js `runNeeds`).
+  // ---------------------------------------------------------------
+  const NEEDS = [
+    { id: "food",      name: "Food",      icon: "🌾", from: "camp",    desc: "Enough in store to eat well; bread and fish both, once a village." },
+    { id: "shelter",   name: "Shelter",   icon: "🏠", from: "camp",    desc: "A proper house. Tents do for a camp, less so for a village, and not at all for a town." },
+    { id: "safety",    name: "Safety",    icon: "🛡", from: "hamlet",  desc: "Armed soldiers and walls enough for the size of the place, and no recent raid." },
+    { id: "faith",     name: "Faith",     icon: "🕯", from: "village", desc: "Room to pray: a wayside shrine serves 15, a chapel 40, a sanctum 120. Any shrine can be raised into a chapel." },
+    { id: "health",    name: "Health",    icon: "🌿", from: "village", desc: "Herbs in store and physicians at work (each tends 25)." },
+    { id: "ale",       name: "Ale",       icon: "🍺", from: "town",    desc: "Ale from the brewers. Each brewer keeps about 35 people in ale; a brewhouse holds three." },
+    { id: "market",    name: "Market",    icon: "⚖", from: "town",     desc: "A market close enough: 40 served by a market, 90 by a trading post, 160 by a market hall." },
+    { id: "furniture", name: "Furniture", icon: "🪑", from: "city",    desc: "Chairs, chests and bedsteads. Each carpenter furnishes about 60 homes' worth of people; a joiner's shop holds three." }
+  ];
+
+  // Petitions from an interest group that has had enough (approval under 25).
+  // `approval` effects move that group's approval directly.
+  const PETITIONS = {
+    farmers: { title: "The Farmers' Petition", text: "A deputation of farmers stands at your door, caps in hand but jaws set. They say the fields carry the whole settlement and get nothing back for it.",
+      options: [
+        { text: "Waive their dues this season", effect: { coin: -20, approval: { farmers: 25 } }, chronicle: "The elder waived the farmers' dues for a season." },
+        { text: "Promise new fields and seed", effect: { wood: -15, approval: { farmers: 15 } }, chronicle: "The farmers were promised new fields." },
+        { text: "Send them back to work", effect: { stability: -3, approval: { farmers: -10 } }, chronicle: "The farmers' petition was refused." }
+      ] },
+    labourers: { title: "Murmurs at the Woodpile", text: "The labourers have stopped work and gathered by the woodpile. Long days, short rations, and nowhere decent to sleep, they say.",
+      options: [
+        { text: "Pay a bonus from the treasury", effect: { coin: -20, approval: { labourers: 25 } }, chronicle: "The labourers were paid a bonus to return to work." },
+        { text: "Give them a feast", effect: { food: -25, approval: { labourers: 20 } }, chronicle: "A feast was held for the settlement's labourers." },
+        { text: "Dock the idle a day's pay", effect: { coin: 5, stability: -4, approval: { labourers: -10 } }, chronicle: "The labourers' stoppage was broken with docked pay." }
+      ] },
+    merchants: { title: "The Merchants' Grievance", text: "The traders complain that the roads are unsafe, the stalls are poor, and the elder seems to forget that coin does not grow in fields.",
+      options: [
+        { text: "Grant them a trading charter", effect: { influence: -6, approval: { merchants: 25 } }, chronicle: "The merchants were granted a trading charter." },
+        { text: "Hire guards for the road", effect: { coin: -25, reputation: 2, approval: { merchants: 18 } }, chronicle: "Guards were hired to keep the trade road safe." },
+        { text: "Tell them to be patient", effect: { approval: { merchants: -8 }, reputation: -2 }, chronicle: "The merchants were told to be patient." }
+      ] },
+    artisans: { title: "The Guild Demands", text: "The smiths, carpenters and brewers have formed something very like a guild, and its first act is a list of demands.",
+      options: [
+        { text: "Recognise the guild", effect: { influence: -5, coin: -10, approval: { artisans: 25 } }, chronicle: "The artisans' guild was formally recognised." },
+        { text: "Buy them iron and timber", effect: { coin: -20, iron: 8, approval: { artisans: 15 } }, chronicle: "Iron and timber were bought for the artisans." },
+        { text: "Forbid any guild", effect: { stability: -3, approval: { artisans: -12 } }, chronicle: "The elder forbade the artisans from forming a guild." }
+      ] },
+    soldiers: { title: "Grumbling in the Ranks", text: "The militia captain reports that the men are grumbling: blunt blades, late pay and a draughty guardhouse. Some talk of the garrison at Duren's Watch, where things are better.",
+      options: [
+        { text: "Pay them what they're owed", effect: { coin: -25, approval: { soldiers: 25 } }, chronicle: "The militia's back pay was settled." },
+        { text: "Arm them properly", effect: { iron: -10, weapons: 6, approval: { soldiers: 20 } }, chronicle: "The militia was given new arms." },
+        { text: "Remind them of their oath", effect: { stability: -2, approval: { soldiers: -10 } }, chronicle: "The militia was reminded of its oath, and not kindly." }
+      ] },
+    clergy: { title: "A Sermon Against the Elder", text: "At the morning service the priest speaks pointedly about leaders who build markets before chapels and forget whom they answer to.",
+      options: [
+        { text: "Make a generous offering", effect: { coin: -20, approval: { clergy: 25 } }, chronicle: "A generous offering was made to the chapel." },
+        { text: "Attend services publicly", effect: { influence: -3, approval: { clergy: 15 } }, chronicle: "The elder was seen at every service for a month." },
+        { text: "Rebuke the priest", effect: { stability: -3, reputation: -2, approval: { clergy: -12 } }, chronicle: "The elder publicly rebuked the priest." }
+      ] },
+    scholars: { title: "The Scholars' Letter", text: "A long letter, beautifully written and faintly insulting, arrives from the settlement's teachers and healers. It concerns the neglect of learning.",
+      options: [
+        { text: "Fund books and instruments", effect: { coin: -20, approval: { scholars: 25 } }, chronicle: "Books and instruments were bought for the scholars." },
+        { text: "Grant them a seat at council", effect: { influence: -5, approval: { scholars: 18 } }, chronicle: "The scholars were given a voice at council." },
+        { text: "Use the letter to light the fire", effect: { approval: { scholars: -12 }, reputation: -1 }, chronicle: "The scholars' letter was burned unread." }
+      ] }
+  };
 
   // ---------------------------------------------------------------
   // KINGDOM-WIDE EVENTS (distant, indirect effects)
@@ -727,28 +806,28 @@ const GameData = (function () {
   // switched again (see engine.js `toggleEdict`), so it's a real commitment.
   // ---------------------------------------------------------------
   const EDICTS = {
-    open_borders:   { name: "Open Borders",      cooldown: 6, effect: { growthMult: 1.4, stabilityFlat: -0.08 },
+    open_borders:   { name: "Open Borders",      cooldown: 6, likes: ["merchants","labourers"], dislikes: ["clergy","farmers"], effect: { growthMult: 1.4, stabilityFlat: -0.08 },
                       desc: "Newcomers are welcomed freely, whoever they are. Faster growth, but old residents grumble." },
-    conscription:   { name: "Conscription",      cooldown: 6, effect: { militaryMult: 1.3, growthMult: 0.85 },
+    conscription:   { name: "Conscription",      cooldown: 6, likes: ["soldiers"], dislikes: ["farmers","labourers"], effect: { militaryMult: 1.3, growthMult: 0.85 },
                       desc: "Able hands are drilled for war at the cost of the fields and the cradle." },
-    high_taxation:  { name: "High Taxation",     cooldown: 6, effect: { coinMult: 1.25, stabilityFlat: -0.12 },
+    high_taxation:  { name: "High Taxation",     cooldown: 6, likes: [], dislikes: ["farmers","merchants","artisans"], effect: { coinMult: 1.25, stabilityFlat: -0.12 },
                       desc: "The treasury swells. The people grumble, quietly for now." },
-    frugal_stores:  { name: "Frugal Stores",     cooldown: 6, effect: { coinMult: 0.9, stabilityFlat: 0.1 },
+    frugal_stores:  { name: "Frugal Stores",     cooldown: 6, likes: ["farmers"], dislikes: ["merchants","soldiers"], effect: { coinMult: 0.9, stabilityFlat: 0.1 },
                       desc: "Spending is watched closely. Slower profit, steadier nerves." },
-    devout_observance: { name: "Devout Observance", cooldown: 6, effect: { stabilityFlat: 0.15, knowledgeMult: 0.9 },
+    devout_observance: { name: "Devout Observance", cooldown: 6, likes: ["clergy"], dislikes: ["scholars"], effect: { stabilityFlat: 0.15, knowledgeMult: 0.9 },
                       desc: "Faith is placed above learning for now. Calmer, if a little incurious." },
-    open_scholarship: { name: "Open Scholarship", cooldown: 6, effect: { knowledgeMult: 1.25, coinMult: 0.95 },
+    open_scholarship: { name: "Open Scholarship", cooldown: 6, likes: ["scholars"], dislikes: ["clergy"], effect: { knowledgeMult: 1.25, coinMult: 0.95 },
                       desc: "Coin is spent freely on books and teaching. The treasury feels it." },
-    forced_labour:  { name: "Forced Labour",     cooldown: 6, effect: { farmYieldMult: 1.2, stabilityFlat: -0.2 },
+    forced_labour:  { name: "Forced Labour",     cooldown: 6, likes: [], dislikes: ["labourers","farmers","clergy"], effect: { farmYieldMult: 1.2, stabilityFlat: -0.2 },
                       desc: "Every hand is put to the harvest, willing or not. Yields rise, resentment rises faster." },
-    militia_reserve:{ name: "Militia Reserve",   cooldown: 6, effect: { militaryMult: 1.15, coinMult: 0.95 },
+    militia_reserve:{ name: "Militia Reserve",   cooldown: 6, likes: ["soldiers","merchants"], dislikes: [], effect: { militaryMult: 1.15, coinMult: 0.95 },
                       desc: "A standing reserve is kept armed and ready, drawing on the treasury year-round." }
   };
 
   return {
     STAGES, RESOURCE_INFO, STARTING_RESOURCES, WORKER_TYPES, JOBS, BUILDINGS,
     TECHS, FACTIONS, FACTION_ACTIONS, MONSTERS, EXPLORATION_SITES,
-    INTEREST_GROUPS, KINGDOM_EVENTS, LOCAL_EVENTS, PERSONALITIES, ADJACENCY_RULES, EDICTS,
+    INTEREST_GROUPS, NEEDS, PETITIONS, KINGDOM_EVENTS, LOCAL_EVENTS, PERSONALITIES, ADJACENCY_RULES, EDICTS,
     FACTION_RELATIONS_SEED, FACTION_INCIDENTS
   };
 })();

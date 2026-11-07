@@ -163,6 +163,8 @@ const VillageView = (function () {
       const cx = t.x + 0.5, cy = t.y + 0.5;
       if (r === "house" && occupied.has(t)) lights.push({ x: cx, y: cy, r: 0.9, c: "255,190,110" });
       else if (r === "workshop") lights.push({ x: t.x + 0.7, y: t.y + 0.3, r: 1.0, c: "255,140,60" });
+      else if (r === "brewhouse" || r === "joinery") lights.push({ x: cx, y: cy, r: 0.8, c: "255,180,100" });
+      else if (r === "wayshrine") lights.push({ x: cx, y: t.y + 0.6, r: 0.6, c: "255,215,150" });
       else if (r === "shrine" && t.building !== "shrine") lights.push({ x: cx, y: t.y + 0.25, r: 1.0, c: "255,215,150" });
       else if (r === "guardhouse" || (r === "keep" && t.building !== "keep")) { lights.push({ x: t.x + 0.1, y: t.y + 0.9, r: 0.8, c: "255,160,80" }); lights.push({ x: t.x + 0.9, y: t.y + 0.9, r: 0.8, c: "255,160,80" }); }
       else if (r === "market" || r === "hall" || r === "school") lights.push({ x: cx, y: cy, r: 0.9, c: "255,200,130" });
@@ -307,11 +309,12 @@ const VillageView = (function () {
       pose = "hammer";
       if (!t) {
         if (j === "mason") t = nearest(by.hills, 4);
-        else if (j === "carpenter") t = pick(by.workshop, p);
+        else if (j === "carpenter") t = pick(by.joinery, p) || pick(by.workshop, p);
         else { t = nearest(by.forest, 4); pose = "carry"; }
       }
     }
     else if (j === "blacksmith") { t = pick(by.workshop, p); pose = "hammer"; }
+    else if (j === "brewer") { t = pick(by.brewhouse, p) || pick(by.workshop, p); pose = "stand"; }
     else if (j === "scout") { const e = world.patrol[Math.floor(rnd() * 4)]; return { x: e.x + (rnd() - 0.5) * 3, y: e.y + (rnd() - 0.5) * 2, pose: "walk", roam: true }; }
     else if (j === "herbalist") { t = nearest(by.forest, 10); pose = "crouch"; }
     else if (building) {
@@ -350,7 +353,7 @@ const VillageView = (function () {
     }
     // leisure: pray at the chapel, browse the market, draw water, or sit by the fire
     const by = world.by, roll = rnd();
-    const chapel = (by.shrine || []).find(t => t.building !== "shrine");
+    const chapel = (by.shrine || []).find(t => t.building !== "shrine") || pick(by.wayshrine, p, 17);
     let t = null;
     if (roll < 0.25 && chapel) t = chapel;
     else if (roll < 0.5 && by.market) t = pick(by.market, p, 13);
@@ -756,6 +759,32 @@ const VillageView = (function () {
       circle(g, x + 0.5, y + 0.5, 0.2, STONE); circle(g, x + 0.5, y + 0.5, 0.12, look.water);
       g.strokeStyle = WOOD_DARK; g.lineWidth = 0.04; g.beginPath(); g.moveTo(x + 0.25, y + 0.5); g.lineTo(x + 0.75, y + 0.5); g.stroke();
       box(g, x + 0.62, y + 0.6, 0.08, 0.08, "#6a4a2a");
+      return;
+    }
+    if (r === "wayshrine") {
+      // a roadside shrine: stone plinth, a small figure, candles and offerings
+      g.fillStyle = "rgba(0,0,0,0.28)"; g.fillRect(x + 0.3, y + 0.36, 0.42, 0.42);
+      box(g, x + 0.33, y + 0.32, 0.36, 0.36, STONE);
+      box(g, x + 0.4, y + 0.38, 0.22, 0.12, FLAGSTONE);
+      circle(g, x + 0.51, y + 0.44, 0.06, "#d8cfb8");
+      for (const [a, b] of [[0.4, 0.6], [0.51, 0.62], [0.62, 0.6]]) circle(g, x + a, y + b, 0.02, "#f0d880", false);
+      for (let i = 0; i < 5; i++) circle(g, x + 0.24 + hash(x, y, 500 + i) * 0.55, y + 0.75 + hash(x, y, 510 + i) * 0.15, 0.022, ["#c84a4a", "#e0c040", "#e8e0f0"][i % 3], false);
+      return;
+    }
+    if (r === "brewhouse") {
+      const inn = room(g, t, { floor: "#6f6250", wallColour: WOOD, cornerStones: true });
+      circle(g, inn.x + 0.2, inn.y + 0.2, 0.15, "#b0683a");
+      circle(g, inn.x + 0.2, inn.y + 0.2, 0.1, "#6a4a22");
+      for (let i = 0; i < 4; i++) { circle(g, inn.x + inn.s - 0.1, inn.y + 0.08 + i * 0.15, 0.065, "#7a5230"); g.strokeStyle = "#3a3a3a"; g.lineWidth = 0.012; g.beginPath(); g.arc(inn.x + inn.s - 0.1, inn.y + 0.08 + i * 0.15, 0.045, 0, 7); g.stroke(); }
+      box(g, inn.x + 0.06, inn.y + inn.s - 0.16, 0.3, 0.1, "#8a6a42");
+      return;
+    }
+    if (r === "joinery") {
+      const inn = room(g, t, { floor: "#8a7356", wallColour: WOOD, cornerStones: false });
+      for (let i = 0; i < 4; i++) box(g, inn.x + 0.03, inn.y + 0.04 + i * 0.06, 0.4, 0.045, i % 2 ? PLANK : "#a8845a");
+      box(g, inn.x + inn.s - 0.26, inn.y + 0.06, 0.22, 0.08, "#6a4a2a");
+      for (const [a, b] of [[0.2, 0.48], [0.38, 0.5]]) { box(g, inn.x + a, inn.y + b, 0.1, 0.1, "#9a7448"); box(g, inn.x + a, inn.y + b - 0.03, 0.1, 0.03, "#7a5634"); }
+      g.fillStyle = "rgba(220,190,140,0.6)"; for (let i = 0; i < 8; i++) g.fillRect(inn.x + inn.s - 0.3 + hash(x, y, 520 + i) * 0.25, inn.y + inn.s - 0.2 + hash(x, y, 530 + i) * 0.15, 0.02, 0.012);
       return;
     }
     // anything else: a plain hut

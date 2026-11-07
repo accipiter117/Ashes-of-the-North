@@ -365,3 +365,18 @@ select.job-select {
      screen that benefits most from landscape's extra width. */
   #mapWrap { height: min(78vh, 560px); }
 }
+
+/* ---------- NEEDS, MOOD AND INTEREST GROUPS ---------- */
+.meter { display: inline-block; width: 70px; height: 7px; border-radius: 4px; background: rgba(255,255,255,0.08); overflow: hidden; vertical-align: middle; }
+.meter > span { display: block; height: 100%; border-radius: 4px; background: var(--ember-bright); }
+.meter.good > span { background: #6f9a4a; }
+.meter.warn > span { background: #c99a3b; }
+.meter.bad > span { background: var(--blood-bright); }
+.need-val { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.need-hint { margin-top: -4px; margin-bottom: 4px; }
+.group-row { padding: 6px 0; border-bottom: 1px solid var(--border-soft); }
+.group-row:last-child { border-bottom: none; }
+.trend { font-size: 10px; }
+.trend.up { color: #8fbf5a; }
+.trend.down { color: var(--blood-bright); }
+.tag.warn { color: #e0b050; border-color: #8a6a2a; }

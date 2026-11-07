@@ -197,7 +197,10 @@ const GameEngine = (function () {
       scheduledEvents: [], // Phase 2: chained/delayed events queue
       eventCooldowns: {}, // eventId -> last turn fired, reduces repetition over a long game
       flags: { tutorialSeen: false },
-      stats: { deaths: 0, births: 0, battlesWon: 0, battlesLost: 0, eventsResolved: 0 },
+      stats: { deaths: 0, births: 0, battlesWon: 0, battlesLost: 0, eventsResolved: 0, emigrated: 0 },
+      groups: initialGroups(),
+      needs: null,
+      petitionTurns: {},
       citizenCounter: citizenCounter // carry the bootstrap counter forward so it round-trips through save/load
     };
     logMsg(state, "The settlement of " + state.settlementName + " is founded among the ruins of the old keep.");
@@ -376,6 +379,27 @@ const GameEngine = (function () {
   function idleCitizens(state) { return livingCitizens(state).filter(c => !c.job && c.age >= 12); }
   function citizensInJob(state, jobId) { return livingCitizens(state).filter(c => c.job === jobId); }
 
+  function soldierCount(state) {
+    let n = 0;
+    for (const c of state.citizens) if (c.alive && c.job && D.JOBS[c.job] && D.JOBS[c.job].type === "soldier" && D.JOBS[c.job].military) n++;
+    return n;
+  }
+  // Share of soldiers with a weapon in hand: weapons in store, one each.
+  function armedFraction(state) {
+    const n = soldierCount(state);
+    return n === 0 ? 1 : clamp((state.resources.weapons || 0) / n, 0, 1);
+  }
+  // Labourers and artisans want about one tool between two and a half workers.
+  function toolWorkers(state) {
+    let n = 0;
+    for (const c of state.citizens) if (c.alive && c.job && D.JOBS[c.job] && (D.JOBS[c.job].type === "labourer" || D.JOBS[c.job].type === "artisan")) n++;
+    return n;
+  }
+  function toolCoverage(state) {
+    const n = toolWorkers(state);
+    return n === 0 ? 1 : clamp((state.resources.tools || 0) / (n * 0.4), 0, 1);
+  }
+
   function militaryStrength(state) {
     let str = 0;
     for (const j in D.JOBS) {
@@ -388,7 +412,8 @@ const GameEngine = (function () {
     // here — this single function already backs raids, defense event combatChecks,
     // and exploration combat, so an alliance's benefit reaches all of them for free.
     const allyBonus = (state.factions || []).filter(f => f.allied).length * 8;
-    return str * mult * emult + allyBonus;
+    // Soldiers fight at half strength without a weapon each (see armedFraction).
+    return str * mult * emult * (0.5 + 0.5 * armedFraction(state)) + allyBonus;
   }
 
   // ---------------------------------------------------------------
@@ -452,11 +477,12 @@ const GameEngine = (function () {
     // 2. Building jobs, skipping those whose inputs the settlement can't supply.
     const hasHerbs = r.herbs >= 3 || citizensInJob(state, "herbalist").length > 0;
     const staffed = [
-      ["trader", true], ["tanner", true], ["miner", true],
+      ["trader", true], ["brewer", stageIndex(state) >= 3 && r.food >= population(state) * 0.4], ["carpenter", stageIndex(state) >= 4 && r.wood >= 10],
+      ["tanner", true], ["miner", true],
       ["blacksmith", r.iron >= 2 || citizensInJob(state, "miner").length > 0],
       ["carpenter", r.wood >= 20], ["administrator", true], ["teacher", true], ["scribe", true],
       ["innkeeper", true], ["caravan_master", true], ["guard", true], ["archer", true], ["militia", true],
-      ["physician", hasHerbs], ["alchemist", hasHerbs], ["brewer", r.food >= population(state)],
+      ["physician", hasHerbs], ["alchemist", hasHerbs], ["brewer", r.food >= population(state) * 0.4],
       ["tax_collector", r.stability >= 40]
     ];
     for (const [jobId, ok] of staffed) if (ok) fill(jobId);
@@ -608,6 +634,12 @@ const GameEngine = (function () {
     const cap = capacities(state);
     const { mult: workerAvailMult } = kingdomMult(state, "workerAvailability");
     const totals = {};
+    // How hard people work: content people work faster (0.85x to 1.15x), a group
+    // that approves of the elder works harder still (0.8x to 1.2x), and labourers
+    // and artisans short of tools lose up to a quarter of their output.
+    const pace = 0.82 + 0.3 * settlementHappiness(state);
+    const tools = toolCoverage(state);
+    state.flags.physicianWork = 0;
     const traitBonusFor = (c, jobId) => {
       let b = 0;
       for (const tr of c.traits) {
@@ -633,8 +665,12 @@ const GameEngine = (function () {
         const have = Math.max(0, (state.resources[res] || 0) + (totals[res] || 0));
         if (need > 0) inputShare = Math.min(inputShare, have / need);
       }
+      const groupMult = 1 + (groupApproval(state, groupOfJob(jobId)) - 50) / 300;
+      const toolMult = (job.type === "labourer" || job.type === "artisan") ? 0.75 + 0.25 * tools : 1;
+      const workMult = pace * groupMult * toolMult;
+      if (jobId === "physician") state.flags.physicianWork = effectiveWorkers * inputShare * workMult;
       for (const res in (job.produces || {})) {
-        let amount = job.produces[res] * effectiveWorkers * seasonMult * buildingMult * inputShare;
+        let amount = job.produces[res] * effectiveWorkers * seasonMult * buildingMult * inputShare * workMult;
         if (res === "food") {
           const { mult: fmult } = techMult(state, "farmYieldMult");
           const { mult: kfmult } = kingdomMult(state, "farmYieldMult");
@@ -697,6 +733,7 @@ const GameEngine = (function () {
     const cap = capacities(state);
     if (state.resources.food > cap.foodStorage) state.resources.food = cap.foodStorage;
     if (state.resources.food < 0) {
+      state.flags.hungryTurn = state.meta.turn;
       const deficit = -state.resources.food;
       state.resources.food = 0;
       state.resources.stability = clamp(round2(state.resources.stability - 6), 0, 100);
@@ -732,6 +769,7 @@ const GameEngine = (function () {
       state.resources.coin = round2(state.resources.coin - upkeep);
     } else {
       const shortfall = round2(upkeep - state.resources.coin);
+      state.flags.upkeepShortTurn = state.meta.turn;
       state.resources.coin = 0;
       const penalty = clamp(round2(shortfall * 0.15), 0, 8);
       state.resources.stability = clamp(round2(state.resources.stability - penalty), 0, 100);
@@ -745,7 +783,7 @@ const GameEngine = (function () {
   // any reason to spend rather than hoard. Only the excess above the cap decays (a
   // fixed percentage of it per turn), so this never claws back what's already below
   // the threshold and never punishes early or mid-game accumulation.
-  const RESOURCE_DECAY_RESOURCES = ["coin", "tools", "weapons", "knowledge", "influence"];
+  const RESOURCE_DECAY_RESOURCES = ["coin", "tools", "weapons", "knowledge", "influence", "ale", "furniture"];
   const STAGE_SOFT_CAPS = { camp: 150, hamlet: 400, village: 900, town: 1800, city: 3500 };
   function resourceSoftCap(state) {
     return STAGE_SOFT_CAPS[state.meta.stage] || 3500;
@@ -873,7 +911,8 @@ const GameEngine = (function () {
     const { mult: edictGrowthMult } = edictMult(state, "growthMult");
     const stabFactor = state.resources.stability / 100;
     const foodFactor = state.resources.food > pop * 0.5 ? 1 : 0.4;
-    const growthRate = 0.018 * stabFactor * slack * foodFactor * (growthMult || 1);
+    const happyFactor = 0.4 + settlementHappiness(state);   // content families have more children
+    const growthRate = 0.018 * stabFactor * slack * foodFactor * (growthMult || 1) * happyFactor;
     const expected = pop * growthRate;
     const wholeBirths = Math.floor(expected);
     const fractional = expected - wholeBirths;
@@ -894,7 +933,7 @@ const GameEngine = (function () {
       }
     }
     // occasional migrants drawn by reputation
-    if (state.resources.reputation > 55 && chance(0.12) && cap.housing > pop) {
+    if (state.resources.reputation > 55 && settlementHappiness(state) >= 0.55 && chance(0.12) && cap.housing > pop) {
       const migrants = 1 + Math.floor(rand() * 3);
       for (let i = 0; i < migrants; i++) {
         if (state.citizens.length >= MAX_NAMED_CITIZENS) break;
@@ -904,6 +943,261 @@ const GameEngine = (function () {
       }
       logMsg(state, migrants + " migrants have arrived, drawn by the settlement's reputation.");
     }
+  }
+
+  // ---------------------------------------------------------------
+  // NEEDS, HAPPINESS AND THE VOICES OF THE TOWN
+  // ---------------------------------------------------------------
+  // Households expect more as the settlement grows (D.NEEDS, each from a stage).
+  // How well those needs are met, plus how each interest group feels about the
+  // elder, sets every resident's happiness. Happiness then feeds back into work
+  // pace, births, stability, newcomers and, if it falls low enough, families
+  // packing up and leaving. Groups that fall below 25 approval petition.
+  const ALE_PER_HEAD = 0.04, FURNITURE_PER_HEAD = 0.008, HERBS_PER_HEAD = 0.01;
+  const TENT_VALUE = { camp: 1, hamlet: 1, village: 0.6, town: 0.25, city: 0.1 };
+  const PETITION_COOLDOWN = 12;
+
+  const JOB_GROUP = {};
+  for (const g of D.INTEREST_GROUPS) for (const j of g.linkedJobs) JOB_GROUP[j] = g.id;
+  function groupOfJob(jobId) { return JOB_GROUP[jobId] || null; }
+  function groupApproval(state, groupId) {
+    if (!groupId || !state.groups || state.groups[groupId] === undefined) return 50;
+    return state.groups[groupId];
+  }
+  function settlementHappiness(state) {
+    return state.needs && typeof state.needs.happiness === "number" ? state.needs.happiness : 0.6;
+  }
+  function stageIndex(state) { return Math.max(0, D.STAGES.findIndex(s => s.id === state.meta.stage)); }
+  function needActive(state, need) { return stageIndex(state) >= D.STAGES.findIndex(s => s.id === need.from); }
+  function edictActive(state, id) { return !!(state.edicts && state.edicts[id] && state.edicts[id].active); }
+  function chainTier(state, rootId) {
+    let best = -1;
+    for (const t of state.grid) {
+      const b = t.building && D.BUILDINGS[t.building];
+      if (b && b.chain && b.chain[0] === rootId) best = Math.max(best, b.tier || 0);
+    }
+    return best;
+  }
+  function chainCount(state, ids) { return state.grid.filter(t => ids.includes(t.building)).length; }
+
+  // Goods households use each month: ale and furniture once they expect them,
+  // herbs as home remedies once health matters; weapons and tools wear out.
+  function runGoods(state) {
+    const r = state.resources, pop = population(state);
+    const supply = {};
+    const use = (res, demand) => {
+      if (demand <= 0) { supply[res] = 1; return; }
+      const got = Math.min(r[res] || 0, demand);
+      r[res] = round2((r[res] || 0) - got);
+      supply[res] = got / demand;
+    };
+    const active = id => needActive(state, D.NEEDS.find(n => n.id === id));
+    use("ale", active("ale") ? pop * ALE_PER_HEAD : 0);
+    use("furniture", active("furniture") ? pop * FURNITURE_PER_HEAD : 0);
+    if (active("health")) use("herbs", pop * HERBS_PER_HEAD);
+    const soldiers = soldierCount(state);
+    if (soldiers && r.weapons > 0) r.weapons = round2(Math.max(0, r.weapons - soldiers * 0.02));
+    const tw = toolWorkers(state);
+    if (tw && r.tools > 0) r.tools = round2(Math.max(0, r.tools - tw * 0.02));
+    state.goodsSupply = supply;
+  }
+
+  // How well each need is met right now, 0..1 (computed for every need, active
+  // or not, so the UI can show what's coming and groups can judge it).
+  function needLevels(state) {
+    const r = state.resources, pop = Math.max(1, population(state));
+    const cap = capacities(state);
+    const si = stageIndex(state);
+    const levels = {};
+    // food: a healthy store, nothing if anyone went hungry this month; bread and fish both from a village on
+    let food = r.food >= pop * 0.5 ? 1 : r.food / (pop * 0.5);
+    if (state.flags.hungryTurn === state.meta.turn) food = 0;
+    if (si >= 2 && !(citizensInJob(state, "farmer").length && citizensInJob(state, "fisherman").length)) food *= 0.85;
+    levels.food = clamp(food, 0, 1);
+    // shelter: houses count fully; tents less as the place grows; beyond the camp, nothing
+    const houseBeds = Math.max(0, cap.housing - BASE_CAMP_HOUSING);
+    const housed = Math.min(pop, houseBeds);
+    const inTents = Math.min(pop - housed, BASE_CAMP_HOUSING);
+    levels.shelter = clamp((housed + inTents * (TENT_VALUE[state.meta.stage] || 0.1)) / pop, 0, 1);
+    // safety: armed strength and walls against the size of the place, dented by a lost fight
+    let safety = (militaryStrength(state) * 1.5 + cap.defense) / (4 + pop * 0.25);
+    if (state.flags.raidLostTurn !== undefined && state.meta.turn - state.flags.raidLostTurn <= 4) safety *= 0.6;
+    levels.safety = clamp(safety, 0, 1);
+    // faith: room in a chapel
+    const faithRoom = chainCount(state, ["wayshrine"]) * 15 + chainCount(state, ["chapel"]) * 40 + chainCount(state, ["sanctum"]) * 120;
+    levels.faith = clamp(faithRoom * (edictActive(state, "devout_observance") ? 1.25 : 1) / pop, 0, 1);
+    // health: physicians at work, eked out by herbs in store
+    levels.health = clamp(((state.flags.physicianWork || 0) * 25 + (r.herbs || 0) * 1.5) / pop, 0, 1);
+    // goods: last month's supply against demand
+    const sup = state.goodsSupply || {};
+    levels.ale = sup.ale !== undefined && needActive(state, D.NEEDS.find(n => n.id === "ale")) ? sup.ale : clamp((r.ale || 0) / (pop * ALE_PER_HEAD), 0, 1);
+    levels.furniture = sup.furniture !== undefined && needActive(state, D.NEEDS.find(n => n.id === "furniture")) ? sup.furniture : clamp((r.furniture || 0) / (pop * FURNITURE_PER_HEAD), 0, 1);
+    const marketRoom = chainCount(state, ["market"]) * 40 + chainCount(state, ["market2"]) * 90 + chainCount(state, ["market3"]) * 160;
+    levels.market = clamp(marketRoom / pop, 0, 1);
+    return levels;
+  }
+
+  // What each group cares about beyond the common needs, each 0..1.
+  function groupWants(state, levels) {
+    const r = state.resources, pop = Math.max(1, population(state));
+    const adults = livingCitizens(state).filter(c => c.age >= 12);
+    const idle = adults.filter(c => !c.job).length;
+    const upkeepOk = state.flags.upkeepShortTurn === undefined || state.meta.turn - state.flags.upkeepShortTurn > 3;
+    const tierScore = (t, scores) => t < 0 ? scores[0] : scores[Math.min(t + 1, scores.length - 1)];
+    const partners = state.factions.filter(f => f.tradeAgreement || f.allied).length;
+    return {
+      farmers: [
+        { text: "a full granary", v: clamp(r.food / (pop * 1.5), 0, 1) },
+        { text: "improved farms", v: chainCount(state, ["farm2", "farm3"]) > 0 ? 1 : 0.4 },
+        { text: "low taxes", v: edictActive(state, "high_taxation") ? 0 : 1 }
+      ],
+      labourers: [
+        { text: "work for everyone", v: adults.length ? 1 - idle / adults.length : 1 },
+        { text: "a proper roof", v: levels.shelter },
+        { text: "no forced labour", v: edictActive(state, "forced_labour") ? 0 : 1 }
+      ],
+      merchants: [
+        { text: "a good market", v: tierScore(chainTier(state, "market"), [0, 0.6, 0.85, 1]) },
+        { text: "safe roads", v: levels.safety },
+        { text: "trading partners", v: clamp(partners / 2, 0, 1) }
+      ],
+      artisans: [
+        { text: "a workshop", v: tierScore(chainTier(state, "workshop"), [0, 0.7, 1]) },
+        { text: "iron to work", v: clamp((r.iron || 0) / 10, 0, 1) },
+        { text: "tools enough", v: toolCoverage(state) }
+      ],
+      soldiers: [
+        { text: "a weapon each", v: armedFraction(state) },
+        { text: "wages paid", v: upkeepOk ? 1 : 0.2 },
+        { text: "proper barracks", v: tierScore(chainTier(state, "guardhouse"), [0.2, 0.5, 0.8, 1]) }
+      ],
+      clergy: [
+        { text: "room at chapel", v: levels.faith },
+        { text: "a fine chapel", v: tierScore(chainTier(state, "shrine"), [0.1, 0.1, 0.7, 1]) },
+        { text: "no forced labour", v: edictActive(state, "forced_labour") ? 0.3 : 1 }
+      ],
+      scholars: [
+        { text: "a school", v: tierScore(chainTier(state, "school"), [0.1, 0.6, 0.85, 1]) },
+        { text: "healers at work", v: levels.health },
+        { text: "open scholarship", v: edictActive(state, "open_scholarship") ? 1 : 0.6 }
+      ]
+    };
+  }
+
+  function needsScore(state, levels) {
+    let sum = 0, weight = 0;
+    for (const n of D.NEEDS) {
+      if (!needActive(state, n)) continue;
+      const w = (n.id === "food" || n.id === "shelter") ? 1.5 : 1;
+      sum += levels[n.id] * w; weight += w;
+    }
+    if (!weight) return 1;
+    // a need left almost entirely unmet hurts more than its share of the average
+    let neglected = 0;
+    for (const n of D.NEEDS) if (needActive(state, n) && levels[n.id] < 0.25) neglected++;
+    return clamp(sum / weight - 0.12 * neglected, 0, 1);
+  }
+
+  function runNeeds(state) {
+    if (!state.groups) state.groups = initialGroups();
+    const levels = needLevels(state);
+    const score = needsScore(state, levels);
+    const wants = groupWants(state, levels);
+    // groups drift toward what they think of things
+    const targets = {};
+    for (const g of D.INTEREST_GROUPS) {
+      const w = wants[g.id] || [];
+      const wantScore = w.length ? w.reduce((a, x) => a + x.v, 0) / w.length : 0.5;
+      let edicts = 0;
+      for (const id in D.EDICTS) {
+        if (!edictActive(state, id)) continue;
+        if ((D.EDICTS[id].likes || []).includes(g.id)) edicts += 10;
+        if ((D.EDICTS[id].dislikes || []).includes(g.id)) edicts -= 15;
+      }
+      const target = clamp(10 + 100 * (0.35 * score + 0.45 * wantScore) + edicts, 0, 100);
+      targets[g.id] = target;
+      state.groups[g.id] = clamp(round2(state.groups[g.id] + (target - state.groups[g.id]) * 0.12), 0, 100);
+    }
+    // every resident: three parts needs, one part how their group feels; idleness stings
+    const allApproval = D.INTEREST_GROUPS.reduce((a, g) => a + state.groups[g.id], 0) / D.INTEREST_GROUPS.length;
+    let total = 0, n = 0;
+    for (const c of livingCitizens(state)) {
+      const g = groupOfJob(c.job);
+      let h = score * 70 + (g ? state.groups[g] : allApproval) * 0.3;
+      if (c.age >= 12 && !c.job) h -= 8;
+      c.happiness = Math.round(clamp(h, 0, 100));
+      total += c.happiness; n++;
+    }
+    const happiness = n ? total / n / 100 : 0.6;
+    state.needs = { levels, score: round2(score), happiness: round2(happiness), targets };
+    // contentment steadies the settlement; misery unsettles it
+    state.resources.stability = clamp(round2(state.resources.stability + (happiness - 0.55) * 1.5), 0, 100);
+    // the unhappiest families leave when things are bad enough
+    if (happiness < 0.4 && chance(0.4)) {
+      const leaving = livingCitizens(state).filter(c => c.age >= 12 && !c.important).sort((a, b) => a.happiness - b.happiness)
+        .slice(0, 1 + Math.floor(population(state) * 0.015));
+      for (const c of leaving) { c.alive = false; c.leftTurn = state.meta.turn; c.job = null; }
+      if (leaving.length) {
+        state.stats.emigrated = (state.stats.emigrated || 0) + leaving.length;
+        logMsg(state, leaving.length === 1 ? leaving[0].name + " has packed up and left for somewhere kinder." : leaving.length + " unhappy residents have packed up and taken the road out of " + state.settlementName + ".");
+      }
+    }
+  }
+
+  function initialGroups() {
+    const g = {};
+    for (const x of D.INTEREST_GROUPS) g[x.id] = 50;
+    return g;
+  }
+
+  // A group under 25 approval petitions the elder (one group at a time, each at most once a year).
+  function petitionDef(id) {
+    if (!id || id.indexOf("petition_") !== 0) return null;
+    const gid = id.slice(9), p = D.PETITIONS[gid];
+    return p ? { id, title: p.title, text: p.text, options: p.options } : null;
+  }
+  function eventDef(id) { return D.LOCAL_EVENTS.find(e => e.id === id) || petitionDef(id); }
+  function maybeTriggerPetition(state) {
+    if (state.activeEvent || !state.groups) return false;
+    if (!state.petitionTurns) state.petitionTurns = {};
+    const unhappy = D.INTEREST_GROUPS.filter(g => state.groups[g.id] < 25 &&
+      (state.petitionTurns[g.id] === undefined || state.meta.turn - state.petitionTurns[g.id] >= PETITION_COOLDOWN))
+      .sort((a, b) => state.groups[a.id] - state.groups[b.id]);
+    if (!unhappy.length || !chance(0.5)) return false;
+    const g = unhappy[0];
+    state.petitionTurns[g.id] = state.meta.turn;
+    const def = petitionDef("petition_" + g.id);
+    state.activeEvent = { id: def.id, title: def.title, text: def.text, options: def.options };
+    return true;
+  }
+
+  // Read-only summaries for the UI.
+  function needsReport(state) {
+    const levels = needLevels(state);
+    const si = stageIndex(state);
+    return {
+      happiness: settlementHappiness(state),
+      score: needsScore(state, levels),
+      pace: 0.82 + 0.3 * settlementHappiness(state),
+      needs: D.NEEDS.map(n => ({ id: n.id, name: n.name, icon: n.icon, desc: n.desc, level: levels[n.id], active: needActive(state, n),
+        from: D.STAGES.find(s => s.id === n.from).name, soon: D.STAGES.findIndex(s => s.id === n.from) === si + 1 }))
+    };
+  }
+  function groupReport(state) {
+    const levels = needLevels(state);
+    const wants = groupWants(state, levels);
+    const targets = (state.needs && state.needs.targets) || {};
+    return D.INTEREST_GROUPS.map(g => {
+      const w = (wants[g.id] || []).slice().sort((a, b) => a.v - b.v);
+      const members = g.linkedJobs.reduce((a, j) => a + citizensInJob(state, j).length, 0);
+      const edictsLiked = Object.keys(D.EDICTS).filter(id => edictActive(state, id) && (D.EDICTS[id].likes || []).includes(g.id)).map(id => D.EDICTS[id].name);
+      const edictsHated = Object.keys(D.EDICTS).filter(id => edictActive(state, id) && (D.EDICTS[id].dislikes || []).includes(g.id)).map(id => D.EDICTS[id].name);
+      const approval = groupApproval(state, g.id);
+      return { id: g.id, name: g.name, icon: g.icon, wants: g.wants, approval, members,
+        trend: targets[g.id] === undefined ? 0 : Math.sign(Math.round(targets[g.id] - approval)),
+        grievance: w.length && w[0].v < 0.6 ? w[0].text : null, pleasedBy: w.length && w[w.length - 1].v >= 0.9 ? w[w.length - 1].text : null,
+        edictsLiked, edictsHated, workMult: 1 + (approval - 50) / 300 };
+    });
   }
 
   // ---------------------------------------------------------------
@@ -1111,6 +1405,7 @@ const GameEngine = (function () {
       chronicle(state, f.name + " raided the settlement and were driven off.");
     } else {
       state.stats.battlesLost++;
+      state.flags.raidLostTurn = state.meta.turn;
       const lossCoin = Math.min(state.resources.coin, 10 + Math.floor(rand() * 20));
       const lossFood = Math.min(state.resources.food, 10 + Math.floor(rand() * 15));
       state.resources.coin = round2(state.resources.coin - lossCoin);
@@ -1142,6 +1437,7 @@ const GameEngine = (function () {
   function maybeTriggerLocalEvent(state) {
     if (state.activeEvent) return;
     if (maybeTriggerScheduledEvent(state)) return;
+    if (maybeTriggerPetition(state)) return;
     if (!chance(0.35)) return;
     if (!state.eventCooldowns) state.eventCooldowns = {};
     const fullPool = D.LOCAL_EVENTS.filter(e => !e.chainOnly);
@@ -1198,7 +1494,7 @@ const GameEngine = (function () {
   // nothing is affordable, every option is allowed so the player can never be stuck.
   function eventOptionAffordable(state, optionIndex) {
     if (!state.activeEvent) return false;
-    const def = D.LOCAL_EVENTS.find(e => e.id === state.activeEvent.id);
+    const def = eventDef(state.activeEvent.id);
     if (!def) return true;
     if (def.options.every(o => eventOptionShortfall(state, o))) return true;
     return !eventOptionShortfall(state, def.options[optionIndex]);
@@ -1206,7 +1502,7 @@ const GameEngine = (function () {
 
   function resolveEvent(state, optionIndex) {
     if (!state.activeEvent) return { ok: false, reason: "No active event." };
-    const def = D.LOCAL_EVENTS.find(e => e.id === state.activeEvent.id);
+    const def = eventDef(state.activeEvent.id);
     const opt = def.options[optionIndex];
     if (!opt) return { ok: false, reason: "Invalid option." };
     if (!eventOptionAffordable(state, optionIndex)) return { ok: false, reason: "The stores can't cover that choice." };
@@ -1268,6 +1564,7 @@ const GameEngine = (function () {
       if (cc.winFollowUp) scheduleEvent(state, cc.winFollowUp.eventId, cc.winFollowUp.delayTurns);
     } else {
       state.stats.battlesLost++;
+      state.flags.raidLostTurn = state.meta.turn;
       if (cc.loseEffect) applyEffectBundle(state, scaleEventEffect(state, cc.loseEffect));
       if (cc.loseChronicle) chronicle(state, cc.loseChronicle);
       const loseCasualtyChance = cc.loseCasualtyChance !== undefined ? cc.loseCasualtyChance : 0.3;
@@ -1281,6 +1578,11 @@ const GameEngine = (function () {
     if (!effect) return;
     for (const key in effect) {
       if (key === "faction") continue;
+      if (key === "approval") {
+        if (!state.groups) state.groups = initialGroups();
+        for (const g in effect.approval) if (state.groups[g] !== undefined) state.groups[g] = clamp(state.groups[g] + effect.approval[g], 0, 100);
+        continue;
+      }
       if (key === "population") {
         const delta = effect.population;
         if (delta > 0) {
@@ -1430,6 +1732,8 @@ const GameEngine = (function () {
     runProduction(state);
     runConsumption(state);
     runUpkeep(state);
+    runGoods(state);
+    runNeeds(state);
     runPopulation(state);
     runLineage(state);
     runFactionDrift(state);
@@ -1473,6 +1777,11 @@ const GameEngine = (function () {
       if (!state.edicts) state.edicts = {};
       if (!state.scheduledEvents) state.scheduledEvents = [];
       if (!state.eventCooldowns) state.eventCooldowns = {};
+      // needs and interest groups (added later): start everyone at an even 50
+      if (!state.groups) state.groups = initialGroups();
+      if (!state.petitionTurns) state.petitionTurns = {};
+      if (state.resources.ale === undefined) state.resources.ale = 0;
+      if (state.resources.furniture === undefined) state.resources.furniture = 0;
       // BUG FIX (citizen ID collisions — see makeCitizen): old saves predate the
       // persisted citizenCounter entirely. Derive a safe resume point from the
       // highest existing numeric ID so every citizen created from now on is
@@ -1522,6 +1831,7 @@ const GameEngine = (function () {
     militaryStrength, legacyScore,
     saveGame, loadGame, hasSave, deleteSave,
     tileAt, isRuinTile, builtTiles, adjacencyBonusForTile, previewAdjacency,
+    needsReport, groupReport, armedFraction, toolCoverage, settlementHappiness, groupApproval,
     toggleEdict, getFactionRelation, eventOptionShortfall, eventOptionAffordable, previewCombatChance, totalUpkeep, resourceSoftCap, factionActionCost
   };
 })();
