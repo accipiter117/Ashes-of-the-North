@@ -279,20 +279,16 @@ const UI = (function () {
     }
     grid += '</div></div>';
 
-    const toolbar =
-      '<div class="map-toolbar">' +
-      '<button class="zoom-btn" id="zoomOutBtn" title="Zoom out">−</button>' +
-      '<span class="zoom-level" id="zoomLevel">100%</span>' +
+    // The map takes the screen; zoom and the time of day float on it.
+    const overlay =
+      '<div class="map-overlay">' +
       '<button class="zoom-btn" id="zoomInBtn" title="Zoom in">+</button>' +
-      '<button class="zoom-btn" id="zoomFitBtn" title="Reset zoom" style="width:auto;padding:0 10px;font-size:11px">Reset</button>' +
-      '<span class="zoom-hint" id="dayClock">Pinch or use +/− · swipe to pan</span>' +
-      '</div>';
+      '<button class="zoom-btn" id="zoomOutBtn" title="Zoom out">−</button>' +
+      '<button class="zoom-btn" id="zoomFitBtn" title="Reset zoom">⟲</button>' +
+      '</div><div class="map-clock" id="dayClock"></div>';
 
     el.innerHTML =
-      '<h2 class="section-title">' + state.settlementName + ': ' + D.STAGES.find(s => s.id === state.meta.stage).name + '</h2>' +
-      '<p class="hint">Tap a tile to inspect it, construct a new building, or upgrade what stands there. Tap a resident to see who they are. The broken stone buildings are ruins from before the war.</p>' +
-      toolbar +
-      grid +
+      '<div id="mapFrame">' + grid + overlay + '</div>' +
       '<div id="tilePanel"></div>' +
       renderNeedsCard() +
       renderMilitarySummaryCard();
@@ -316,6 +312,8 @@ const UI = (function () {
         elm.classList.add("selected");
         selectedTile = { x: parseInt(elm.dataset.x), y: parseInt(elm.dataset.y) };
         renderTilePanel();
+        const panel = document.getElementById("tilePanel");
+        if (panel && panel.scrollIntoView) panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
       });
     });
 

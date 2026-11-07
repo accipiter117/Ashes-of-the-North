@@ -115,7 +115,9 @@ explore → respond to events → survive the season → develop → expand. One
   a midday meal at the fire, an evening at the chapel, market or well, and home at
   night while half the soldiers keep a torch-lit watch. Day turns to night, the
   seasons change the ground and crops, and the weather comes and goes. Tap a
-  resident to see who they are. It is purely cosmetic (it only reads game state and
+  resident to see who they are. Idle residents and children wander and mingle, and
+  merchants' carts, pilgrims, refugees, pedlars and the odd witcher pass along the road.
+  The village always animates, Reduce Motion included. It is purely cosmetic (it only reads game state and
   uses its own random numbers), and it pauses whenever the map isn't on screen
 
 ## File structure
