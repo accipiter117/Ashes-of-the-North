@@ -179,7 +179,7 @@ try {
       const optBtn = doc.querySelector(".option-btn:not([disabled])");
       if (optBtn) click(optBtn);
     }
-    click(doc.getElementById("turnBtn"));
+    window.UI.advanceMonth(); // time runs on its own in the real page; jsdom has no clock
   }
   assert(window.UI.getState().meta.turn >= 25, "turns advanced via UI (" + window.UI.getState().meta.turn + ")");
   const seasonAfterTurns = doc.getElementById("app").dataset.season;

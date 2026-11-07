@@ -283,7 +283,8 @@ select.job-select {
   background: radial-gradient(circle at 35% 30%, var(--ember-bright), var(--ember) 60%, var(--ember-dark));
   color: #241708; font-family: var(--font-display); font-weight: 700; font-size: 13px; line-height: 1; padding: 0 6px;
 }
-#timeControls button.paused { background: radial-gradient(circle at 35% 30%, #8fbf5a, #5a7a3a 65%, #3a4a22); }
+#timeControls button { background: rgba(60,50,38,0.9); color: var(--ink); border-color: rgba(255,255,255,0.12); min-width: 40px; }
+#timeControls button.active { background: radial-gradient(circle at 35% 30%, var(--ember-bright), var(--ember) 60%, var(--ember-dark)); color: #241708; border-color: #4a2f10; }
 #timeControls button:active { transform: scale(0.95); }
 #monthBar { position: absolute; left: 10px; right: 10px; bottom: 4px; height: 3px; border-radius: 2px; background: rgba(255,255,255,0.1); overflow: hidden; }
 #monthFill { display: block; height: 100%; width: 0; background: var(--ember-bright); }

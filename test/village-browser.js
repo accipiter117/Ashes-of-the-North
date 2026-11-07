@@ -78,16 +78,12 @@ server.listen(0, async () => {
     const f1 = await fillAt(); await page.waitForTimeout(1500); const f2 = await fillAt();
     check(f2 > f1, "the month runs on in real time (" + f1 + "% -> " + f2 + "%)");
     await page.click("#pauseBtn"); const p1 = await fillAt(); await page.waitForTimeout(1200); const p2 = await fillAt();
-    check(p1 === p2 && (await page.textContent("#pauseBtn")) === "▶", "pause stops the clock");
-    await page.click("#pauseBtn");
-    await page.click("#speedBtn");
-    check((await page.textContent("#speedBtn")) === "2×", "the speed button cycles to 2×");
-    await page.click("#speedBtn"); await page.click("#speedBtn");
-    const monthBefore = await page.evaluate(() => UI.getState().meta.turn);
-    await page.click("#turnBtn");
-    await page.waitForTimeout(200);
-    const monthAfter = await page.evaluate(() => { const s = UI.getState(); if (s.activeEvent) { document.querySelector(".option-btn:not([disabled])").click(); } return s.meta.turn; });
-    check(monthAfter === monthBefore + 1, "skip moves to the next month");
+    check(p1 === p2 && await page.evaluate(() => document.getElementById("pauseBtn").classList.contains("active")), "pause stops the clock");
+    await page.click('.speed-btn[data-speed="4"]');
+    const s1 = await fillAt(); await page.waitForTimeout(1000); const s2 = await fillAt();
+    check(s2 - s1 >= 4 && await page.evaluate(() => document.querySelector('.speed-btn[data-speed="4"]').classList.contains("active")), "4× resumes from pause and runs faster (" + s1 + "% -> " + s2 + "%)");
+    await page.click('.speed-btn[data-speed="1"]');
+    check(await page.$("#turnBtn") === null, "there is no button to skip ahead");
 
     // an attack shows on the map with a banner, and ends
     await page.evaluate(() => { const s = UI.getState(); s.activeEvent = null; document.getElementById("modalRoot").innerHTML = ""; GameEngine.tileAt(s.grid, 9, 8).building = "granary"; s.resources.food = 80; GameEngine.startBattle(s, { kind: "raider", from: "east", count: 3, mode: "sally", label: "Test raiders" }); });

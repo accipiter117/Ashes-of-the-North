@@ -51,14 +51,12 @@ const UI = (function () {
   // Battles are ticked here too, so they carry on whichever screen is open.
   // ---------------------------------------------------------------
   const REALTIME = typeof navigator !== "undefined" && !/jsdom/i.test(navigator.userAgent || "") && typeof requestAnimationFrame === "function";
-  const SPEEDS = [1, 2, 4];
   let speed = 1, paused = false, monthT = 0, lastTs = 0, clockRunning = false, battleSeen = null, lastBannerText = "";
   function gameClock() { return { phase: monthT / E.MONTH_SECONDS, speed: (paused || state.activeEvent) ? 0 : speed }; }
 
   function wireTurnButton() {
-    document.getElementById("turnBtn").addEventListener("click", () => onAdvanceTurn(false));
     document.getElementById("pauseBtn").addEventListener("click", () => setPaused(!paused));
-    document.getElementById("speedBtn").addEventListener("click", () => setSpeed(SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length]));
+    document.querySelectorAll(".speed-btn").forEach(b => b.addEventListener("click", () => { setSpeed(parseInt(b.dataset.speed)); setPaused(false); }));
     document.getElementById("battleBanner").addEventListener("click", () => { switchView("settlement"); centreOnBattle(); });
     document.addEventListener("keydown", e => {
       if (e.code === "Space" && !/input|select|textarea/i.test((e.target && e.target.tagName) || "")) { e.preventDefault(); setPaused(!paused); }
@@ -69,9 +67,9 @@ const UI = (function () {
   function setPaused(p) { paused = p; updateClockUI(); }
   function setSpeed(v) { speed = v; updateClockUI(); }
   function updateClockUI() {
-    const pb = document.getElementById("pauseBtn"), sb = document.getElementById("speedBtn"), fill = document.getElementById("monthFill");
-    if (pb) { pb.textContent = paused ? "▶" : "⏸"; pb.classList.toggle("paused", paused); }
-    if (sb) sb.textContent = speed + "×";
+    const pb = document.getElementById("pauseBtn"), fill = document.getElementById("monthFill");
+    if (pb) pb.classList.toggle("active", paused);
+    document.querySelectorAll(".speed-btn").forEach(b => b.classList.toggle("active", !paused && parseInt(b.dataset.speed) === speed));
     if (fill) fill.style.width = Math.round(monthT / E.MONTH_SECONDS * 100) + "%";
   }
 
@@ -178,7 +176,6 @@ const UI = (function () {
     const stageName = D.STAGES.find(s => s.id === state.meta.stage).name;
     document.getElementById("dateDisplay").innerHTML =
       season + ", Year " + state.meta.year + '<span class="stage-tag">' + stageName + '</span>';
-    document.getElementById("turnBtnSeason").textContent = season;
     // Drives the seasonal terrain palette (see css `[data-season]` rules) — set on
     // #app rather than just the map so any future seasonal theming has the hook too.
     const appEl = document.getElementById("app");
@@ -986,7 +983,11 @@ const UI = (function () {
     setTimeout(() => { t.style.opacity = "0"; t.style.transition = "opacity .4s"; setTimeout(() => t.remove(), 400); }, 2600);
   }
 
-  return { init, getState, setState, renderAll, openEventModal, toast, switchView };
+  // Moves the game on one month at once. Not on screen (time runs on its own);
+  // used by the page test, which runs without a real-time clock.
+  function advanceMonth() { onAdvanceTurn(false); }
+
+  return { init, getState, setState, renderAll, openEventModal, toast, switchView, advanceMonth };
 })();
 
 if (typeof window !== "undefined") window.UI = UI;
